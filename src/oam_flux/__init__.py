@@ -6,6 +6,13 @@ from .flux_deposit import build_flux_kick, deposit_on_flywheels, hopf_fiber_coor
 from .lattice import TwistLattice, helical_seed
 from .photon import OAMPacket
 from .vqc_coupling import VQCCouplingState, run_vqc_coupling_step
+from .emergence import (
+    EmergenceAnalogs,
+    ell_sweep,
+    emergence_report,
+    kappa_sweep,
+    run_vqc_emergence_trial,
+)
 from .vqc_photonics import PhotonicsConfig, PropagationResult, propagate_multi_ell_vectorized
 
 __all__ = [
@@ -24,6 +31,11 @@ __all__ = [
     "deposit_on_flywheels",
     "VQCCouplingState",
     "run_vqc_coupling_step",
+    "EmergenceAnalogs",
+    "run_vqc_emergence_trial",
+    "kappa_sweep",
+    "ell_sweep",
+    "emergence_report",
 ]
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"

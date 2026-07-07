@@ -38,3 +38,13 @@ coupling:
   flywheel_sites: 4     # discrete resonator indices on lattice diagonal
   kick_strength: 0.08   # Δθ per unit photon flux at encounter
   conserve_momentum: true
+
+emergence:
+  lambda_t: 2.0         # normalize dynamics to λt = 2 (mystery survival convention)
+  pump_fraction: 0.5  # fraction of λt for VQC pump; remainder = pure PDE relaxation
+  kappa_min: 0.80
+  kappa_max: 0.90
+  kappa_sweep_points: 21
+  ell_sweep_l_max: 6
+  n_z: 100              # shorter propagation for probe sweeps
+  nr: 256

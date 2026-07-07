@@ -29,11 +29,14 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 # v0.2 — VQC vectorized propagation + fiber flux deposition
 .venv/bin/python scripts/run_vqc_coupling_demo.py
 
+# v0.3 — mystery emergence probes (κ sweep, ℓ sweep, analog matching)
+.venv/bin/python scripts/run_emergence_probes.py
+
 # Tests
 .venv/bin/pytest -q
 ```
 
-Outputs: `outputs/coupling_demo/` (v0.1) · `outputs/vqc_coupling_demo/` (v0.2).
+Outputs: `outputs/coupling_demo/` (v0.1) · `outputs/vqc_coupling_demo/` (v0.2) · `outputs/emergence_probes/` (v0.3).
 
 ## Module map
 
@@ -45,7 +48,8 @@ src/oam_flux/
 ├── coupling.py      # Analytic momentum ledger + flywheel kicks (v0.1)
 ├── vqc_photonics.py # VQC vectorized multi-ℓ propagation (v0.2)
 ├── flux_deposit.py  # Hopf fiber coords + flux → twist kick
-└── vqc_coupling.py  # z-resolved VQC ↔ lattice coupling (v0.2)
+├── vqc_coupling.py  # z-resolved VQC ↔ lattice coupling (v0.2)
+└── emergence.py     # Mystery analog probes @ λt=2 (v0.3)
 ```
 
 ## Shared constants (`configs/default.yaml`)
@@ -62,7 +66,7 @@ src/oam_flux/
 
 1. **v0.1** — analytic OAM packet + flywheel kicks + PDE relaxation ✅
 2. **v0.2** — VQC vectorized multi-ℓ propagation; Hopf fiber flux deposition ✅
-3. **v0.3** — mystery probes: golden-angle OAM quantization, κ* residual alignment
+3. **v0.3** — mystery emergence probes: κ/ℓ sweeps, R / e⁻² / golden analog matching ✅
 4. **v0.4** — Streamlit dashboard (lattice + helical beam overlay)
 
 ## Related repos
