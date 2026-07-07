@@ -87,7 +87,7 @@ src/oam_flux/
 1. **v0.1** — analytic OAM packet + flywheel kicks + PDE relaxation ✅
 2. **v0.2** — VQC vectorized multi-ℓ propagation; Hopf fiber flux deposition ✅
 3. **v0.3** — mystery emergence probes: κ/ℓ sweeps, R / e⁻² / golden analog matching ✅
-4. **v0.4** — Hugging Face Gradio Space ✅
+4. **v0.4** — HF Space: helix 3D, mini-Eddington, cross-tab sync ✅
 
 ## Related repos
 

@@ -13,6 +13,8 @@ from .emergence import (
     kappa_sweep,
     run_vqc_emergence_trial,
 )
+from .eddington import run_eddington_probe
+from .helix_viz import build_helix_geometry, render_helix_frame
 from .vqc_photonics import PhotonicsConfig, PropagationResult, propagate_multi_ell_vectorized
 
 __all__ = [
@@ -36,6 +38,9 @@ __all__ = [
     "kappa_sweep",
     "ell_sweep",
     "emergence_report",
+    "build_helix_geometry",
+    "render_helix_frame",
+    "run_eddington_probe",
 ]
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"

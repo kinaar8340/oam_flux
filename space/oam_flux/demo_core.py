@@ -9,7 +9,17 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+import tempfile
+from pathlib import Path
+
 from oam_flux.constants import RESIDUAL_R
+from oam_flux.eddington import run_eddington_probe
+from oam_flux.helix_viz import (
+    build_helix_geometry,
+    frames_to_gif,
+    helix_animation_frames,
+    render_helix_frame,
+)
 from oam_flux.coupling import CouplingState, run_coupling_step
 from oam_flux.emergence import (
     E_INV2,
@@ -266,3 +276,103 @@ def run_analytic_coupling(ell: int, kappa: float, n_steps: int, lambda_nm: float
         f"{_conservation_badge(state.history)}\n"
     )
     return img, md
+
+
+def run_helix_3d(
+    ell: int,
+    l_inner: int,
+    turns: int,
+    animate: bool,
+    knot_mod: bool,
+) -> tuple:
+    """Helix-within-helix + Hopf fiber — static frame + optional GIF."""
+    inner = int(l_inner) if int(l_inner) != 0 else abs(int(ell))
+    geom = build_helix_geometry(
+        l_outer=max(1, abs(int(ell))),
+        l_inner=inner,
+        active_ell=int(ell),
+        turns=int(turns),
+        knot_mod=bool(knot_mod),
+        num_points=600,
+    )
+    title = f"Helix⊂Helix + Hopf  ℓ={ell}  inner={inner}  turns={turns}"
+    still = _fig_to_pil(render_helix_frame(geom, azim=52, elev=22, title=title))
+
+    gif_path = None
+    if animate:
+        frames = helix_animation_frames(geom, n_frames=24)
+        tmp = Path(tempfile.gettempdir()) / f"oam_helix_{ell}_{inner}.gif"
+        frames_to_gif(frames, str(tmp), duration_ms=90)
+        gif_path = str(tmp)
+
+    md = (
+        f"### Helix-within-helix 3D\n"
+        f"- **Active ℓ** = {ell} · **inner** = {inner} · **turns** = {turns}\n"
+        f"- **Outer** counter-propagating OAM helix (blue)\n"
+        f"- **Inner** nested helix with 8₃ knot modulation (orange)\n"
+        f"- **Hopf fiber** backbone on gauged lattice (teal dashed)\n"
+    )
+    return still, gif_path, md
+
+
+def run_eddington(
+    ell: int,
+    kappa: float,
+    lambda_nm: float,
+    n_flywheels: int,
+    n_steps: int,
+    kick_strength: float,
+) -> tuple:
+    """Mini-Eddington flywheel cluster probe."""
+    result = run_eddington_probe(
+        kappa=float(kappa),
+        ell=int(ell),
+        lambda_nm=float(lambda_nm),
+        n_flywheels=int(n_flywheels),
+        n_steps=int(n_steps),
+        kick_strength=float(kick_strength),
+    )
+
+    fig, axes = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
+    hist = result.history
+    steps = [h["step"] for h in hist]
+    axes[0].plot(steps, [h["lattice_received"] for h in hist], color="#e76f51", label="p_lattice")
+    axes[0].plot(steps, [h["cumulative_outward"] for h in hist], color="#c9a227", label="outward flux")
+    axes[0].set_ylabel("momentum")
+    axes[0].set_title(f"Mini-Eddington  ℓ={ell}  κ={kappa:.3f}  flywheels={n_flywheels}")
+    axes[0].legend(fontsize=8)
+    axes[0].grid(alpha=0.3)
+
+    axes[1].bar(
+        range(result.n_sites),
+        [s.momentum_received for s in result.sites],
+        color="#457b9d",
+        alpha=0.7,
+        label="received",
+    )
+    axes[1].bar(
+        range(result.n_sites),
+        [s.binding for s in result.sites],
+        color="#2a9d8f",
+        alpha=0.5,
+        label="binding κ·θ",
+    )
+    axes[1].set_xlabel("flywheel site")
+    axes[1].set_ylabel("per-site")
+    axes[1].legend(fontsize=8)
+    axes[1].grid(alpha=0.3, axis="y")
+    fig.tight_layout()
+    plot_img = _fig_to_pil(fig)
+
+    unstable = sum(1 for s in result.sites if s.unstable)
+    status = "🔴 **Eddington limit exceeded**" if result.limit_exceeded else "🟢 **Within binding**"
+    md = (
+        f"### Mini-Eddington probe\n"
+        f"- **ℓ** = {ell} · **κ** = {kappa:.4f} · **λ** = {lambda_nm:.0f} nm\n"
+        f"- Flywheels = **{n_flywheels}** · unstable sites = **{unstable}**\n"
+        f"- Total outward flux = **{result.total_outward_flux:.4f}**\n"
+        f"- {status}\n\n"
+        f"When **p_received > κ·θ_binding**, excess momentum radiates outward "
+        f"(mini radiation-pressure / Eddington analog).\n"
+    )
+    return plot_img, md
