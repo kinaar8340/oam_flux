@@ -22,7 +22,7 @@ class OAMPacket:
 
     @property
     def momentum(self) -> float:
-        """p ∝ E/c · |ℓ|/λ — explicit OAM kinetic momentum."""
+        """p = (h/λ) · |ℓ| · E_scale — OAM kinetic momentum (×10⁻²⁷ kg·m/s)."""
         if self._momentum_p is not None:
             return self._momentum_p
         from .momentum import oam_kinetic_momentum

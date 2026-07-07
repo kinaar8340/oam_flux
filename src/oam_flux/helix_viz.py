@@ -55,6 +55,44 @@ def hopf_fiber_curve(
     return x, y, z
 
 
+def hopf_tangent_at_t(
+    t: float,
+    *,
+    radius: float = 0.55,
+) -> np.ndarray:
+    """Unit tangent to the Hopf fiber at parameter t."""
+    phi = t * 0.5
+    eta = t
+    dx = (
+        -radius * np.sin(phi) * np.cos(eta * 0.35) * 0.5
+        - radius * np.cos(phi) * np.sin(eta * 0.35) * 0.35
+    )
+    dy = (
+        radius * np.cos(phi) * np.cos(eta * 0.35) * 0.5
+        - radius * np.sin(phi) * np.sin(eta * 0.35) * 0.35
+    )
+    dz = 1.0 / (2.0 * np.pi)
+    vec = np.array([dx, dy, dz], dtype=float)
+    norm = float(np.linalg.norm(vec))
+    if norm < 1e-12:
+        return np.array([0.0, 0.0, 1.0])
+    return vec / norm
+
+
+def hopf_tangent_at_lattice_site(
+    index: tuple[int, int, int],
+    *,
+    nx: int,
+    turns: float = 3.0,
+) -> np.ndarray:
+    """Hopf fiber tangent at a lattice flywheel voxel (maps site → fiber parameter)."""
+    i, j, k = index
+    denom = max(nx - 1, 1)
+    t_frac = float(i + j + k) / (3.0 * denom)
+    t = t_frac * turns * 2.0 * np.pi
+    return hopf_tangent_at_t(t)
+
+
 def build_helix_geometry(
     *,
     l_outer: int = 3,
@@ -178,8 +216,8 @@ def helix_animation_frames(
     return frames
 
 
-def frames_to_gif(figures: list, path: str, *, duration_ms: int = 80) -> str:
-    """Save matplotlib figures as animated GIF via Pillow."""
+def figures_to_pil(figures: list, *, dpi: int = 100):
+    """Rasterize matplotlib figures to RGB PIL images."""
     from io import BytesIO
 
     from PIL import Image
@@ -187,20 +225,69 @@ def frames_to_gif(figures: list, path: str, *, duration_ms: int = 80) -> str:
     images: list[Image.Image] = []
     for fig in figures:
         buf = BytesIO()
-        fig.savefig(buf, format="png", dpi=100, bbox_inches="tight")
+        fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight")
         import matplotlib.pyplot as plt
+
         plt.close(fig)
         buf.seek(0)
-        images.append(Image.open(buf).convert("P", palette=Image.ADAPTIVE))
+        images.append(Image.open(buf).convert("RGB"))
+    return images
+
+
+def frames_to_gif(images: list, path: str, *, duration_ms: int = 80) -> str:
+    """Save PIL RGB frames as animated GIF via Pillow."""
+    from PIL import Image
 
     if not images:
         raise ValueError("No frames to save")
-    images[0].save(
+    palette_frames = [im.convert("P", palette=Image.ADAPTIVE) for im in images]
+    palette_frames[0].save(
         path,
         save_all=True,
-        append_images=images[1:],
+        append_images=palette_frames[1:],
         duration=duration_ms,
         loop=0,
         optimize=False,
     )
     return path
+
+
+def frames_to_mp4(images: list, path: str, *, fps: float = 11.0) -> str | None:
+    """Encode PIL RGB frames to H.264 MP4 via ffmpeg (for gr.Video pause/play)."""
+    import shutil
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
+    if not images or shutil.which("ffmpeg") is None:
+        return None
+
+    out_path = Path(path)
+    with tempfile.TemporaryDirectory(prefix="oam_helix_mp4_") as tmp:
+        tmp_path = Path(tmp)
+        for i, frame in enumerate(images):
+            frame.save(tmp_path / f"frame_{i:03d}.png")
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-framerate",
+            f"{fps:.3f}",
+            "-i",
+            str(tmp_path / "frame_%03d.png"),
+            "-vf",
+            "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-vsync",
+            "cfr",
+            "-movflags",
+            "+faststart",
+            str(out_path),
+        ]
+        subprocess.run(cmd, check=True)
+    return str(out_path)

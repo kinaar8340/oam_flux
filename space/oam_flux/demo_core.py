@@ -16,7 +16,9 @@ from oam_flux.constants import RESIDUAL_R
 from oam_flux.eddington import run_eddington_probe
 from oam_flux.helix_viz import (
     build_helix_geometry,
+    figures_to_pil,
     frames_to_gif,
+    frames_to_mp4,
     helix_animation_frames,
     render_helix_frame,
 )
@@ -30,7 +32,11 @@ from oam_flux.emergence import (
     kappa_sweep,
 )
 from oam_flux.lattice import TwistLattice
-from oam_flux.momentum import oam_kinetic_momentum
+from oam_flux.momentum import (
+    DEFAULT_CONSERVATION_TOLERANCE,
+    is_momentum_conserved,
+    oam_kinetic_momentum,
+)
 from oam_flux.photon import OAMPacket
 from oam_flux.vqc_coupling import VQCCouplingState, run_vqc_coupling_step
 from oam_flux.vqc_photonics import PhotonicsConfig
@@ -64,11 +70,16 @@ def _conservation_badge(history: list[dict]) -> str:
     if not history:
         return "—"
     last = history[-1]
-    res = abs(last.get("conservation_residual", 0.0))
+    residual = last.get("conservation_residual", 0.0)
     total = last.get("initial_total", 1.0)
+    res = abs(residual)
     pct = 100.0 * (1.0 - res / max(abs(total), 1e-12))
-    ok = "✅" if res < 0.02 * max(abs(total), 1e-9) else "⚠️"
-    return f"{ok} **Momentum conserved** — residual `{res:.5f}` ({pct:.1f}% of initial p₀)"
+    tol_pct = 100.0 * DEFAULT_CONSERVATION_TOLERANCE
+    ok = "✅" if is_momentum_conserved(residual, total) else "⚠️"
+    return (
+        f"{ok} **Momentum conserved** — residual `{res:.5f}` ({pct:.1f}% of p₀; "
+        f"tolerance ±{tol_pct:.1f}%)"
+    )
 
 
 def _plot_momentum_history(history: list[dict], *, title: str, p0_label: str = "p₀") -> plt.Figure:
@@ -81,7 +92,7 @@ def _plot_momentum_history(history: list[dict], *, title: str, p0_label: str = "
     axes[0].grid(alpha=0.3)
 
     ax = axes[1]
-    ax.plot(steps, [h["photon_momentum"] for h in history], color="#457b9d", lw=1.8, label="p_photon ∝ ℓ/λ")
+    ax.plot(steps, [h["photon_momentum"] for h in history], color="#457b9d", lw=1.8, label="p_photon ∝ h|ℓ|/λ")
     ax.plot(steps, [h.get("lattice_received", -h["momentum_ledger"]) for h in history],
             color="#e76f51", lw=1.8, label="p_lattice (received)")
     if history:
@@ -167,7 +178,7 @@ def run_vqc_coupling(
     last = state.history[-1] if state.history else {}
     md = (
         f"### VQC coupling — ℓ={ell} · κ={kappa:.4f} · λ={lambda_nm:.0f} nm\n"
-        f"- **p₀** = {p0:.6f}  (p ∝ |ℓ|/λ)\n"
+        f"- **p₀** = {p0:.6f} ×10⁻²⁷ kg·m/s  (p = h|ℓ|/λ)\n"
         f"- Final ⟨θ⟩ = **{state.lattice.mean_twist:.4f}**\n"
         f"- p_photon final = **{last.get('photon_momentum', 0):.4f}**\n"
         f"- p_lattice received = **{last.get('lattice_received', 0):.4f}**\n"
@@ -270,7 +281,7 @@ def run_analytic_coupling(ell: int, kappa: float, n_steps: int, lambda_nm: float
     md = (
         f"### Analytic momentum ledger\n"
         f"- **ℓ** = {ell} · **λ** = {lambda_nm:.0f} nm · **κ** = {kappa:.4f}\n"
-        f"- **p₀** = {p0:.6f}  (|ℓ|/λ)\n"
+        f"- **p₀** = {p0:.6f} ×10⁻²⁷ kg·m/s  (p = h|ℓ|/λ)\n"
         f"- Final ⟨θ⟩ = **{state.lattice.mean_twist:.4f}**\n"
         f"- Δp_lattice = **{last.get('lattice_received', 0):.4f}**\n\n"
         f"{_conservation_badge(state.history)}\n"
@@ -298,12 +309,21 @@ def run_helix_3d(
     title = f"Helix⊂Helix + Hopf  ℓ={ell}  inner={inner}  turns={turns}"
     still = _fig_to_pil(render_helix_frame(geom, azim=52, elev=22, title=title))
 
-    gif_path = None
+    anim_path = None
+    anim_note = ""
     if animate:
-        frames = helix_animation_frames(geom, n_frames=24)
-        tmp = Path(tempfile.gettempdir()) / f"oam_helix_{ell}_{inner}.gif"
-        frames_to_gif(frames, str(tmp), duration_ms=90)
-        gif_path = str(tmp)
+        fig_frames = helix_animation_frames(geom, n_frames=24)
+        pil_frames = figures_to_pil(fig_frames)
+        tmp_dir = Path(tempfile.gettempdir())
+        mp4_tmp = tmp_dir / f"oam_helix_{ell}_{inner}.mp4"
+        anim_path = frames_to_mp4(pil_frames, str(mp4_tmp), fps=11.0)
+        if anim_path is None:
+            gif_tmp = tmp_dir / f"oam_helix_{ell}_{inner}.gif"
+            frames_to_gif(pil_frames, str(gif_tmp), duration_ms=90)
+            anim_path = str(gif_tmp)
+            anim_note = "\n- *MP4 unavailable — GIF fallback (no native pause)*"
+        else:
+            anim_note = "\n- Use the **video player controls** to pause or scrub the rotation."
 
     md = (
         f"### Helix-within-helix 3D\n"
@@ -311,8 +331,9 @@ def run_helix_3d(
         f"- **Outer** counter-propagating OAM helix (blue)\n"
         f"- **Inner** nested helix with 8₃ knot modulation (orange)\n"
         f"- **Hopf fiber** backbone on gauged lattice (teal dashed)\n"
+        f"{anim_note}"
     )
-    return still, gif_path, md
+    return still, anim_path, md
 
 
 def run_eddington(
@@ -333,30 +354,58 @@ def run_eddington(
         kick_strength=float(kick_strength),
     )
 
-    fig, axes = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
+    import numpy as np
+
+    fig, axes = plt.subplots(2, 1, figsize=(8, 6.5), sharex=False)
     hist = result.history
     steps = [h["step"] for h in hist]
     axes[0].plot(steps, [h["lattice_received"] for h in hist], color="#e76f51", label="p_lattice")
     axes[0].plot(steps, [h["cumulative_outward"] for h in hist], color="#c9a227", label="outward flux")
+    if hist and "wind_z" in hist[0]:
+        axes[0].plot(
+            steps,
+            [h.get("wind_z", 0.0) for h in hist],
+            color="#2a9d8f",
+            ls="--",
+            lw=1.4,
+            label="Hopf wind (z)",
+        )
     axes[0].set_ylabel("momentum")
+    axes[0].set_xlabel("step")
     axes[0].set_title(f"Mini-Eddington  ℓ={ell}  κ={kappa:.3f}  flywheels={n_flywheels}")
     axes[0].legend(fontsize=8)
     axes[0].grid(alpha=0.3)
 
+    sites_x = np.arange(result.n_sites)
     axes[1].bar(
-        range(result.n_sites),
+        sites_x,
         [s.momentum_received for s in result.sites],
         color="#457b9d",
         alpha=0.7,
         label="received",
     )
     axes[1].bar(
-        range(result.n_sites),
+        sites_x,
         [s.binding for s in result.sites],
         color="#2a9d8f",
         alpha=0.5,
         label="binding κ·θ",
     )
+    for idx, site in enumerate(result.sites):
+        vec = site.outward_flux_vec
+        mag = float(np.linalg.norm(vec))
+        if mag > 1e-9:
+            axes[1].quiver(
+                idx,
+                site.binding,
+                vec[0] * 0.35,
+                vec[2] * 0.35,
+                angles="xy",
+                scale_units="xy",
+                scale=1.0,
+                color="#c9a227",
+                width=0.006,
+            )
     axes[1].set_xlabel("flywheel site")
     axes[1].set_ylabel("per-site")
     axes[1].legend(fontsize=8)
@@ -366,13 +415,21 @@ def run_eddington(
 
     unstable = sum(1 for s in result.sites if s.unstable)
     status = "🔴 **Eddington limit exceeded**" if result.limit_exceeded else "🟢 **Within binding**"
+    w = result.wind_vector
+    wind_mag = float(np.linalg.norm(w))
+    wind_note = (
+        f"- **Hopf wind** = ({w[0]:.3f}, {w[1]:.3f}, {w[2]:.3f}) · |wind| = **{wind_mag:.4f}**\n"
+        if wind_mag > 1e-9
+        else "- **Hopf wind** = none (within binding)\n"
+    )
     md = (
         f"### Mini-Eddington probe\n"
         f"- **ℓ** = {ell} · **κ** = {kappa:.4f} · **λ** = {lambda_nm:.0f} nm\n"
         f"- Flywheels = **{n_flywheels}** · unstable sites = **{unstable}**\n"
         f"- Total outward flux = **{result.total_outward_flux:.4f}**\n"
+        f"{wind_note}"
         f"- {status}\n\n"
-        f"When **p_received > κ·θ_binding**, excess momentum radiates outward "
-        f"(mini radiation-pressure / Eddington analog).\n"
+        f"When **p_received > κ·θ_binding**, excess momentum radiates **along the local "
+        f"Hopf fiber** (preferred wind axis; gold arrows in per-site chart).\n"
     )
     return plot_img, md

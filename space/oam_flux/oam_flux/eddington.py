@@ -17,6 +17,7 @@ class FlywheelSite:
     index: tuple[int, int, int]
     momentum_received: float = 0.0
     outward_flux: float = 0.0
+    outward_flux_vec: np.ndarray = field(default_factory=lambda: np.zeros(3))
     local_twist: float = 0.0
     binding: float = 0.0
     unstable: bool = False
@@ -31,9 +32,12 @@ class EddingtonResult:
     history: list[dict[str, float]] = field(default_factory=list)
     limit_exceeded: bool = False
     total_outward_flux: float = 0.0
+    wind_vector: np.ndarray = field(default_factory=lambda: np.zeros(3))
 
     def to_dict(self) -> dict:
         unstable = sum(1 for s in self.sites if s.unstable)
+        w = self.wind_vector
+        wind_mag = float(np.linalg.norm(w))
         return {
             "kappa": self.kappa,
             "ell": float(self.ell),
@@ -41,9 +45,33 @@ class EddingtonResult:
             "limit_exceeded": self.limit_exceeded,
             "unstable_sites": float(unstable),
             "total_outward_flux": self.total_outward_flux,
+            "wind_x": float(w[0]),
+            "wind_y": float(w[1]),
+            "wind_z": float(w[2]),
+            "wind_magnitude": wind_mag,
             "max_binding": max((s.binding for s in self.sites), default=0.0),
             "max_momentum": max((s.momentum_received for s in self.sites), default=0.0),
         }
+
+
+def _hopf_wind_torque(
+    lattice: TwistLattice,
+    index: tuple[int, int, int],
+    tangent: np.ndarray,
+    strength: float,
+) -> np.ndarray:
+    """Spread excess momentum as twist perturbation along the local Hopf fiber."""
+    i, j, k = index
+    nx = lattice.nx
+    torque = np.zeros_like(lattice.theta)
+    di, dj, dk = tangent
+    for hop in range(1, 4):
+        ii = int(np.clip(i + hop * di * 2.0, 0, nx - 1))
+        jj = int(np.clip(j + hop * dj * 2.0, 0, nx - 1))
+        kk = int(np.clip(k + hop * dk * 2.0, 0, nx - 1))
+        torque[ii, jj, kk] -= 0.04 * strength / hop
+    torque[i, j, k] += 0.08 * strength * float(dk)
+    return torque
 
 
 def binding_at_site(local_twist: float, kappa: float, *, theta_crit: float = 5.8) -> float:
@@ -67,6 +95,8 @@ def run_eddington_probe(
     nx: int = 20,
 ) -> EddingtonResult:
     """Pump VQC flux into flywheel cluster; detect Eddington-style outward flux."""
+    from .helix_viz import hopf_tangent_at_lattice_site
+
     lattice = TwistLattice(nx=nx, kappa=kappa)
     photonics = PhotonicsConfig(l_max=l_max, n_z=n_steps, nr=256, lambda_nm=lambda_nm)
     state = VQCCouplingState.from_config(
@@ -106,6 +136,8 @@ def run_eddington_probe(
         lattice.relax_step()
 
         step_outward = 0.0
+        step_wind = np.zeros(3)
+        wind_torque = np.zeros_like(lattice.theta)
         for site in sites:
             i, j, k = site.index
             site.local_twist = float(lattice.theta[i, j, k])
@@ -117,16 +149,25 @@ def run_eddington_probe(
             excess = max(0.0, site.momentum_received - site.binding)
             new_outward = excess - site.outward_flux
             if new_outward > 0:
+                tangent = hopf_tangent_at_lattice_site(site.index, nx=nx)
                 site.outward_flux = excess
+                site.outward_flux_vec += tangent * new_outward
+                step_wind += tangent * new_outward
                 site.unstable = True
                 step_outward += new_outward
-                # Shed twist back to lattice (outward radiation)
+                wind_torque += _hopf_wind_torque(lattice, site.index, tangent, new_outward)
+                # Shed twist locally; directional wind spreads along Hopf fiber
                 lattice.theta[i, j, k] = max(
                     0.01,
                     site.local_twist - 0.15 * new_outward / max(site.binding, 0.01),
                 )
 
+        if float(np.abs(wind_torque).max()) > 0:
+            lattice.theta = np.clip(lattice.theta + 0.12 * wind_torque, 0.01, 2 * np.pi - 0.01)
+
         result.total_outward_flux += step_outward
+        result.wind_vector += step_wind
+        w = result.wind_vector
         result.history.append(
             {
                 "step": float(step),
@@ -134,6 +175,9 @@ def run_eddington_probe(
                 "lattice_received": -lattice.momentum_ledger,
                 "outward_flux": step_outward,
                 "cumulative_outward": result.total_outward_flux,
+                "wind_x": float(w[0]),
+                "wind_y": float(w[1]),
+                "wind_z": float(w[2]),
                 "unstable_count": float(sum(1 for s in sites if s.unstable)),
             }
         )

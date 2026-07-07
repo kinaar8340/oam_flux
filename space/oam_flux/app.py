@@ -72,7 +72,7 @@ with gr.Blocks(title="OAM–Flux", theme=gr.themes.Soft(primary_hue="purple")) a
         with gr.Tab("VQC Coupling"):
             gr.Markdown(
                 "**VQC** — Multi-ℓ propagation → Hopf fiber flux kicks. "
-                "Momentum **p ∝ |ℓ|/λ**."
+                "Momentum **p = h|ℓ|/λ** (×10⁻²⁷ kg·m/s)."
             )
             vqc_status = gr.Markdown("*Adjust ℓ and κ — Emergence tab follows automatically.*")
             with gr.Row():
@@ -115,12 +115,18 @@ with gr.Blocks(title="OAM–Flux", theme=gr.themes.Soft(primary_hue="purple")) a
                 hx_inner = gr.Slider(1, 20, value=3, step=1, label="inner |ℓ|")
                 hx_turns = gr.Slider(3, 12, value=6, step=1, label="turns")
             with gr.Row():
-                hx_animate = gr.Checkbox(value=True, label="Generate rotation GIF")
+                hx_animate = gr.Checkbox(value=True, label="Generate rotation animation")
                 hx_knot = gr.Checkbox(value=True, label="8₃ knot modulation")
             hx_btn = gr.Button("Render helix 3D", variant="primary")
             with gr.Row():
                 hx_still = gr.Image(label="3D snapshot")
-                hx_gif = gr.Image(label="Rotation animation")
+                hx_video = gr.Video(
+                    label="Rotation animation",
+                    autoplay=True,
+                    loop=True,
+                    interactive=False,
+                    buttons=["download"],
+                )
             hx_md = gr.Markdown()
 
         with gr.Tab("Eddington"):
@@ -160,7 +166,7 @@ with gr.Blocks(title="OAM–Flux", theme=gr.themes.Soft(primary_hue="purple")) a
         p = oam_kinetic_momentum(energy_scale=1.0, ell=int(ell), lambda_nm=lam)
         return (
             f"**Active:** ℓ={int(ell)} · κ={kappa:.3f} · λ={lam:.0f} nm · "
-            f"**p₀ ≈ {p:.6f}** · R_ref=0.137486"
+            f"**p₀ ≈ {p:.6f}** ×10⁻²⁷ kg·m/s · R_ref=0.137486"
         )
 
     def _sync_from_vqc(ell, kappa, lmax):
@@ -209,7 +215,7 @@ with gr.Blocks(title="OAM–Flux", theme=gr.themes.Soft(primary_hue="purple")) a
     hx_btn.click(
         run_helix_3d,
         [hx_ell, hx_inner, hx_turns, hx_animate, hx_knot],
-        [hx_still, hx_gif, hx_md],
+        [hx_still, hx_video, hx_md],
     )
     ed_btn.click(
         run_eddington,

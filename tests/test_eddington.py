@@ -1,3 +1,5 @@
+import numpy as np
+
 from oam_flux.eddington import binding_at_site, run_eddington_probe
 
 
@@ -17,4 +19,20 @@ def test_eddington_probe_runs():
     )
     assert result.n_sites == 4
     assert len(result.history) == 30
-    assert "total_outward_flux" in result.to_dict()
+    meta = result.to_dict()
+    assert "total_outward_flux" in meta
+    assert "wind_z" in meta
+
+
+def test_eddington_wind_along_hopf_fiber():
+    result = run_eddington_probe(
+        kappa=0.80,
+        ell=4,
+        n_flywheels=6,
+        n_steps=60,
+        kick_strength=0.15,
+    )
+    if result.total_outward_flux > 0:
+        w = result.wind_vector
+        assert float(w[2]) > 0.0
+        assert float(np.linalg.norm(w)) > 0.0
