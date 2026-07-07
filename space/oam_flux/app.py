@@ -102,13 +102,38 @@ with gr.Blocks(title="OAM–Flux", theme=gr.themes.Soft(primary_hue="purple")) a
                 vqc_n_pulses = gr.Slider(2, 5, value=3, step=1, label="pulses")
                 vqc_pump_steps = gr.Slider(10, 60, value=30, step=5, label="pump steps")
                 vqc_gap_steps = gr.Slider(10, 60, value=20, step=5, label="recovery gap")
+                vqc_pulse_shape = gr.Radio(
+                    ["square", "gaussian"],
+                    value="square",
+                    label="pulse shape",
+                    info="Square = flat-top pump; Gaussian = smooth rise/fall envelope on κ_eff",
+                )
+                vqc_recovery_mem = gr.Slider(
+                    0.0, 1.0, value=0.0, step=0.1,
+                    label="recovery memory",
+                    info="0 = full θ reset each gap; 1 = carry twist load between pulses",
+                )
+                vqc_recovery_tau = gr.Slider(
+                    5, 80, value=25, step=5,
+                    label="recovery τ (steps)",
+                    info="Exponential relax: ⟨θ⟩ → θ₀ with time constant τ (one e-folding ≈ τ steps)",
+                )
+            vqc_dose_equiv = gr.Checkbox(
+                value=False,
+                label="Dose equivalence compare",
+                info="Run continuous vs pulsed at equal total injected (N×p₀) and same step horizon",
+            )
             vqc_btn = gr.Button("Run VQC coupling", variant="primary")
             with gr.Row():
                 vqc_ts = gr.Image(label="Timeseries")
                 vqc_heat = gr.Image(label="Propagation ℓ×z")
             with gr.Row():
                 vqc_kick_img = gr.Image(label="Flux kick slice")
-                vqc_md = gr.Markdown()
+                vqc_matrix = gr.Image(
+                    label="Dose equivalence matrix (Δ load · Δ slip)",
+                    visible=True,
+                )
+            vqc_md = gr.Markdown()
 
         with gr.Tab("Emergence"):
             gr.Markdown("**Mystery probes** @ λt=2 — ℓ, κ, L_max synced from VQC tab.")
@@ -244,8 +269,9 @@ with gr.Blocks(title="OAM–Flux", theme=gr.themes.Soft(primary_hue="purple")) a
         [
             vqc_ell, vqc_kappa, vqc_kick, vqc_steps, vqc_lmax, vqc_turb,
             vqc_lambda, vqc_energy, vqc_pulse, vqc_n_pulses, vqc_pump_steps, vqc_gap_steps,
+            vqc_recovery_mem, vqc_recovery_tau, vqc_pulse_shape, vqc_dose_equiv,
         ],
-        [vqc_ts, vqc_heat, vqc_kick_img, vqc_md],
+        [vqc_ts, vqc_heat, vqc_kick_img, vqc_matrix, vqc_md],
     )
     em_btn.click(
         run_emergence,
@@ -275,4 +301,4 @@ with gr.Blocks(title="OAM–Flux", theme=gr.themes.Soft(primary_hue="purple")) a
     )
 
 if __name__ == "__main__":
-    demo.launch()
+    demo.launch(server_name="127.0.0.1", server_port=7861)

@@ -29,6 +29,13 @@ class VQCCouplingState:
     current_pulse: int = 0
     pulse_phase: str = "single"
     pulse_train_mode: bool = False
+    recovery_memory: float = 0.0
+    recovery_tau: float = 25.0
+    pulse_shape: str = "square"
+    pump_envelope_factor: float = 1.0
+    equivalence_mode: bool = False
+    delivery_mode: str = "single"
+    target_total_dose: float = 0.0
     history: list[dict[str, float]] = field(default_factory=list)
 
     def refill_reservoir(self) -> None:
@@ -98,16 +105,23 @@ def run_vqc_coupling_step(state: VQCCouplingState, step: int) -> None:
     from .momentum import effective_kick_strength
 
     z_idx = min(state.z_index, state.propagation.n_z - 1)
+    if state.pulse_train_mode and state.pulse_phase == "pump":
+        envelope = float(state.pump_envelope_factor)
+    elif state.pulse_train_mode:
+        envelope = 0.0
+    else:
+        envelope = 1.0
     pump_active = photon_pump_active(
         state.photon_reservoir, state.initial_total_momentum,
     )
     slip = 0.0
 
-    if pump_active:
+    if pump_active and envelope > 0.0:
         br_dep = lattice_back_reaction(state.lattice, ell=state.ell)
         k_eff = (
             effective_kick_strength(state.kick_strength, state.energy_scale)
             * br_dep["coupling_factor"]
+            * envelope
         )
         kick, deposited = deposit_on_flywheels(
             state.lattice,
@@ -131,10 +145,15 @@ def run_vqc_coupling_step(state: VQCCouplingState, step: int) -> None:
         else:
             import numpy as np
             state.lattice.theta = np.clip(state.lattice.theta + kick, 0.01, 2 * np.pi - 0.01)
-    else:
+    elif not pump_active:
         state.recovery_steps += 1
 
-    state.lattice.relax_step(pump_active=pump_active)
+    in_pump_window = not state.pulse_train_mode or state.pulse_phase == "pump"
+    state.lattice.relax_step(
+        pump_active=pump_active and in_pump_window,
+        recovery_memory=state.recovery_memory if not pump_active else 0.0,
+        recovery_tau=state.recovery_tau,
+    )
     br = lattice_back_reaction(state.lattice, ell=state.ell)
     state.record(step)
     state.history[-1].update(
@@ -151,6 +170,10 @@ def run_vqc_coupling_step(state: VQCCouplingState, step: int) -> None:
             "pulse_phase_pump": 1.0 if state.pulse_phase == "pump" else 0.0,
             "pulses_fired": float(state.pulses_fired),
             "total_injected": state.total_injected,
+            "recovery_tau": state.recovery_tau,
+            "pulse_shape": 1.0 if state.pulse_shape == "gaussian" else 0.0,
+            "pump_envelope": envelope,
+            "delivery_mode_cont": 1.0 if state.delivery_mode == "continuous" else 0.0,
         }
     )
 

@@ -6,6 +6,30 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+DEFAULT_RECOVERY_TAU = 25.0
+
+
+def tau_from_step_rate(rate: float) -> float:
+    """Map legacy per-step linear rate to exponential time constant τ (in steps)."""
+    r = float(np.clip(rate, 1e-6, 1.0 - 1e-6))
+    return float(-1.0 / np.log(1.0 - r))
+
+
+def recovery_step_alpha(
+    *,
+    tau: float,
+    memory: float = 0.0,
+    step_dt: float = 1.0,
+) -> float:
+    """
+    Per-step fraction relaxing θ toward θ₀ via discrete exponential decay.
+
+    θ ← θ₀ + (θ − θ₀)·exp(−Δt/τ)  ⟹  α = (1 − memory)·(1 − exp(−Δt/τ))
+    """
+    mem = float(np.clip(memory, 0.0, 1.0))
+    tau_eff = max(float(tau), 1e-6)
+    return (1.0 - mem) * (1.0 - np.exp(-float(step_dt) / tau_eff))
+
 
 def helical_seed(nx: int, *, pitch: float = 0.35, amplitude: float = 1.2) -> np.ndarray:
     """Two-gyro helical IC retaining σ > 0 (mystery structured-IC class)."""
@@ -25,11 +49,14 @@ class TwistLattice:
     theta: np.ndarray = field(init=False)
     theta_initial: np.ndarray = field(init=False)
     momentum_ledger: float = 0.0
-    recovery_rate: float = 0.04
+    recovery_tau: float = DEFAULT_RECOVERY_TAU
+    recovery_rate: float | None = None
 
     def __post_init__(self) -> None:
         self.theta = helical_seed(self.nx)
         self.theta_initial = self.theta.copy()
+        if self.recovery_rate is not None:
+            self.recovery_tau = tau_from_step_rate(self.recovery_rate)
 
     @property
     def mean_twist(self) -> float:
@@ -67,6 +94,8 @@ class TwistLattice:
         *,
         external_torque: np.ndarray | None = None,
         pump_active: bool = True,
+        recovery_memory: float = 0.0,
+        recovery_tau: float | None = None,
     ) -> float:
         """Single PDE step: ∂θ/∂t = DΔθ + cot + Δω − κ⟨θ⟩ + burst + external."""
         lap = self._laplacian()
@@ -82,11 +111,14 @@ class TwistLattice:
             rhs = rhs + external_torque
         self.theta = np.clip(self.theta + self.dt * rhs, 0.01, 2 * np.pi - 0.01)
         if not pump_active:
-            self.theta = np.clip(
-                self.theta + self.recovery_rate * (self.theta_initial - self.theta),
-                0.01,
-                2 * np.pi - 0.01,
-            )
+            tau = float(recovery_tau if recovery_tau is not None else self.recovery_tau)
+            alpha = recovery_step_alpha(tau=tau, memory=recovery_memory)
+            if alpha > 0.0:
+                self.theta = np.clip(
+                    self.theta + alpha * (self.theta_initial - self.theta),
+                    0.01,
+                    2 * np.pi - 0.01,
+                )
         return self.mean_twist
 
     def twist_load_vs_initial(self) -> float:

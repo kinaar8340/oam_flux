@@ -8,6 +8,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
 
 import tempfile
 from pathlib import Path
@@ -126,13 +127,45 @@ def _annotate_pulse_train(axes, history: list[dict]) -> None:
 def _pulse_train_summary_line(state) -> str:
     if not getattr(state, "pulse_train_mode", False) or state.pulses_fired <= 1:
         return ""
+    mem = float(getattr(state, "recovery_memory", 0.0))
+    mem_note = (
+        f" · recovery memory = **{mem:.2f}** (0 = full θ reset, 1 = carry twist)"
+        if mem > 0.0
+        else ""
+    )
+    shape = getattr(state, "pulse_shape", "square")
     return (
         f"- **Pulse train** = {state.pulses_fired} pulses · "
-        f"total injected = **{state.total_injected:.4f}** (p₀ each)\n"
+        f"shape = **{shape}** · "
+        f"total injected = **{state.total_injected:.4f}** (p₀ each){mem_note}\n"
     )
 
 
-def _recovery_summary_line(history: list[dict]) -> str:
+def _pulse_cumulative_block(history: list[dict]) -> str:
+    from oam_flux.pulse_stats import compute_pulse_statistics
+
+    stats = compute_pulse_statistics(history)
+    cum = stats["cumulative"]
+    if not stats["pulses"]:
+        return (
+            f"- **Cumulative** phase slip = **{cum['total_phase_slip']:.4f}** · "
+            f"p_lattice received = **{cum['total_lattice_momentum']:.4f}**\n"
+        )
+    lines = [
+        f"- **Cumulative** phase slip = **{cum['total_phase_slip']:.4f}** · "
+        f"p_lattice received = **{cum['total_lattice_momentum']:.4f}** · "
+        f"⟨η_min⟩/pulse = **{cum['mean_eta_pump_min']:.3f}**\n",
+        "- **Per pulse** (η_min → η_gap · slip · Δp_lattice):\n",
+    ]
+    for p in stats["pulses"]:
+        lines.append(
+            f"  - #{p['pulse']}: **{p['eta_min']:.3f}** → **{p['eta_after_gap']:.3f}** · "
+            f"slip **{p['slip']:.4f}** · lattice **{p['lattice_deposited']:.4f}**\n"
+        )
+    return "".join(lines)
+
+
+def _recovery_summary_line(history: list[dict], *, recovery_tau: float | None = None) -> str:
     if not history or "recovery_steps" not in history[-1]:
         return ""
     last = history[-1]
@@ -142,8 +175,10 @@ def _recovery_summary_line(history: list[dict]) -> str:
     etas = [h.get("back_reaction_coupling", 1.0) for h in history]
     eta_min = min(etas) if etas else 1.0
     eta_final = history[-1].get("back_reaction_coupling", 1.0)
+    tau = recovery_tau if recovery_tau is not None else last.get("recovery_tau")
+    tau_note = f" · τ = **{float(tau):.1f}** steps (exp)" if tau is not None else ""
     return (
-        f"- **Recovery** = {rec} steps after pump off · "
+        f"- **Recovery** = {rec} steps after pump off{tau_note} · "
         f"η: {eta_min:.3f} → **{eta_final:.3f}**\n"
     )
 
@@ -217,10 +252,276 @@ def _plot_momentum_history(history: list[dict], *, title: str, p0_label: str = "
         ax.axhline(p0, color="#c9a227", ls=":", lw=1.2, label=f"{p0_label}={p0:.4f}")
         ax.plot(steps, [h.get("total_momentum", 0) for h in history], color="#6a4c93",
                 ls="--", lw=1.0, alpha=0.8, label="p_total")
+        if any(h.get("cumulative_phase_slip", 0) > 0 for h in history):
+            ax.plot(
+                steps,
+                [h.get("cumulative_phase_slip", 0) for h in history],
+                color="#9b2226",
+                ls="-.",
+                lw=1.1,
+                alpha=0.85,
+                label="cum. phase slip",
+            )
+        if any(h.get("pump_envelope", 0) > 0 for h in history):
+            env_curve = [h.get("pump_envelope", 0.0) * p0 for h in history]
+            ax.fill_between(
+                steps, 0, env_curve, color="#2a9d8f", alpha=0.12, label="pump envelope",
+            )
+            ax.plot(steps, env_curve, color="#2a9d8f", ls=":", lw=0.9, alpha=0.55)
     ax.set_xlabel("step")
     ax.set_ylabel("momentum (norm.)")
     ax.legend(fontsize=8, loc="best")
     ax.grid(alpha=0.3)
+    fig.tight_layout()
+    return fig
+
+
+def _build_vqc_state(
+    *,
+    ell: int,
+    kappa: float,
+    kick_strength: float,
+    sim_steps: int,
+    l_max: int,
+    turbulence: float,
+    lambda_nm: float,
+    e_scale: float,
+    recovery_tau: float,
+) -> tuple[VQCCouplingState, TwistLattice]:
+    lattice = TwistLattice(nx=20, kappa=kappa, recovery_tau=float(recovery_tau))
+    photonics = PhotonicsConfig(
+        l_max=l_max,
+        n_z=min(int(sim_steps), 200),
+        nr=256,
+        turbulence=turbulence,
+        lambda_nm=lambda_nm,
+    )
+    state = VQCCouplingState.from_config(
+        lattice,
+        photonics,
+        ell=ell,
+        coupling_cfg={
+            "kick_strength": kick_strength,
+            "flywheel_sites": 4,
+            "conserve_momentum": True,
+            "energy_scale": e_scale,
+        },
+    )
+    state.recovery_tau = float(recovery_tau)
+    return state, lattice
+
+
+def _plot_equivalence_comparison(
+    hist_cont: list[dict],
+    hist_pulse: list[dict],
+    *,
+    title: str,
+    p0: float,
+) -> plt.Figure:
+    fig, axes = plt.subplots(2, 2, figsize=(10, 6.5), sharex="col")
+
+    def _plot_row(ax_twist, ax_mom, history: list[dict], label: str, *, annotate: bool) -> None:
+        if not history:
+            return
+        steps = [h["step"] for h in history]
+        ax_twist.plot(steps, [h["mean_twist"] for h in history], color="#2a9d8f", lw=1.4, label="⟨θ⟩")
+        if annotate:
+            _annotate_pulse_train([ax_twist], history)
+        ax_eta = ax_twist.twinx()
+        ax_eta.plot(
+            steps,
+            [h.get("back_reaction_coupling", 1.0) for h in history],
+            color="#6a4c93",
+            ls="--",
+            lw=1.0,
+            label="η",
+        )
+        ax_eta.set_ylim(0.0, 1.05)
+        ax_twist.set_ylabel(f"{label} ⟨θ⟩")
+        ax_twist.grid(alpha=0.3)
+
+        ax_mom.plot(steps, [h["photon_momentum"] for h in history], color="#457b9d", lw=1.5, label="p_photon")
+        ax_mom.plot(
+            steps,
+            [h.get("lattice_received", 0.0) for h in history],
+            color="#e76f51",
+            lw=1.5,
+            label="p_lattice",
+        )
+        ax_mom.axhline(p0, color="#c9a227", ls=":", lw=1.0, alpha=0.8)
+        ax_mom.set_ylabel(f"{label} momentum")
+        ax_mom.grid(alpha=0.3)
+
+    _plot_row(axes[0, 0], axes[1, 0], hist_cont, "Continuous", annotate=False)
+    _plot_row(axes[0, 1], axes[1, 1], hist_pulse, "Pulsed", annotate=True)
+    axes[1, 0].set_xlabel("step")
+    axes[1, 1].set_xlabel("step")
+    fig.suptitle(title, fontsize=11)
+    fig.tight_layout()
+    return fig
+
+
+def _equivalence_summary_md(
+    cont: dict,
+    pulse: dict,
+    delta: dict,
+    *,
+    n_pulses: int,
+    p0: float,
+    pump_steps: int,
+    gap_steps: int,
+    recovery_tau: float,
+    pulse_shape: str,
+) -> str:
+    target = float(n_pulses) * float(p0)
+    return (
+        f"### Dose equivalence — **{int(n_pulses)} × p₀** = **{target:.4f}** total injected\n"
+        f"Same horizon: **{int(cont['sim_steps'])}** steps "
+        f"(pulse window {int(pump_steps)} + gap {int(gap_steps)} × {int(n_pulses)})\n\n"
+        "| Metric | Continuous | Pulsed | Δ (pulsed − cont) |\n"
+        "|--------|------------|--------|-------------------|\n"
+        f"| Total injected | {cont['total_injected']:.4f} | {pulse['total_injected']:.4f} | "
+        f"{pulse['total_injected'] - cont['total_injected']:+.4f} |\n"
+        f"| p_lattice received | {cont['lattice_received']:.4f} | {pulse['lattice_received']:.4f} | "
+        f"{delta['lattice_received']:+.4f} |\n"
+        f"| Phase slip | {cont['cumulative_phase_slip']:.4f} | {pulse['cumulative_phase_slip']:.4f} | "
+        f"{delta['cumulative_phase_slip']:+.4f} |\n"
+        f"| η_final | {cont['eta_final']:.3f} | {pulse['eta_final']:.3f} | "
+        f"{delta['eta_final']:+.3f} |\n"
+        f"| ⟨θ⟩_final | {cont['mean_twist_final']:.4f} | {pulse['mean_twist_final']:.4f} | "
+        f"{delta['mean_twist_final']:+.4f} |\n"
+        f"| Twist load | {cont['twist_load']:.4f} | {pulse['twist_load']:.4f} | "
+        f"{delta['twist_load']:+.4f} |\n"
+        f"| Recovery steps | {int(cont['recovery_steps'])} | {int(pulse['recovery_steps'])} | "
+        f"{delta['recovery_steps']:+.0f} |\n\n"
+        f"- **Pulsed** shape = **{pulse_shape}** · τ = **{recovery_tau:.0f}** steps\n"
+        f"- Continuous = same pump/gap schedule · immediate refill in pump windows · "
+        f"shared recovery memory\n"
+    )
+
+
+def _compute_dose_equivalence_matrix(
+    *,
+    ell: int,
+    kappa: float,
+    kick_strength: float,
+    l_max: int,
+    turbulence: float,
+    lambda_nm: float,
+    e_scale: float,
+    recovery_tau: float,
+    n_pulses: int,
+    pump_steps: int,
+    gap_steps: int,
+    p0: float,
+    memories: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Δ load and Δ slip grids [shape, memory] for square and gaussian."""
+    from oam_flux.dose_equivalence import (
+        DoseEquivalenceConfig,
+        compare_delivery_metrics,
+        extract_delivery_metrics,
+        run_continuous_dose_matched,
+        run_pulsed_dose_matched,
+    )
+    from oam_flux.pulse_train import PulseTrainConfig
+
+    horizon = int(n_pulses) * (int(pump_steps) + int(gap_steps))
+    dcfg = DoseEquivalenceConfig(n_pulses=int(n_pulses), p0=p0, max_steps=horizon)
+    shapes = ("square", "gaussian")
+    delta_load = np.zeros((len(shapes), len(memories)))
+    delta_slip = np.zeros((len(shapes), len(memories)))
+
+    for row, shape in enumerate(shapes):
+        for col, mem in enumerate(memories):
+            pcfg = PulseTrainConfig(
+                n_pulses=int(n_pulses),
+                pump_steps=int(pump_steps),
+                gap_steps=int(gap_steps),
+                recovery_memory=float(mem),
+                recovery_tau=float(recovery_tau),
+                pulse_shape=shape,
+            )
+            state_cont, _ = _build_vqc_state(
+                ell=ell, kappa=kappa, kick_strength=kick_strength, sim_steps=horizon,
+                l_max=l_max, turbulence=turbulence, lambda_nm=lambda_nm,
+                e_scale=e_scale, recovery_tau=recovery_tau,
+            )
+            state_pulse, _ = _build_vqc_state(
+                ell=ell, kappa=kappa, kick_strength=kick_strength, sim_steps=horizon,
+                l_max=l_max, turbulence=turbulence, lambda_nm=lambda_nm,
+                e_scale=e_scale, recovery_tau=recovery_tau,
+            )
+            run_continuous_dose_matched(state_cont, dcfg, pcfg)
+            run_pulsed_dose_matched(state_pulse, pcfg)
+            delta = compare_delivery_metrics(
+                extract_delivery_metrics(state_cont),
+                extract_delivery_metrics(state_pulse),
+            )
+            delta_load[row, col] = delta["twist_load"]
+            delta_slip[row, col] = delta["cumulative_phase_slip"]
+
+    return delta_load, delta_slip
+
+
+def _plot_dose_equivalence_matrix_heatmap(
+    memories: np.ndarray,
+    delta_load: np.ndarray,
+    delta_slip: np.ndarray,
+    *,
+    current_memory: float,
+    n_pulses: int,
+    pump_steps: int,
+    gap_steps: int,
+    recovery_tau: float,
+) -> plt.Figure:
+    """Heatmap of Δ(pulsed − continuous) over shape × recovery memory."""
+    shapes = ["square", "gaussian"]
+    mem_labels = [f"{m:.1f}" for m in memories]
+    cur_col = int(np.argmin(np.abs(memories - float(current_memory))))
+
+    fig, axes = plt.subplots(1, 2, figsize=(10.5, 3.2))
+
+    panels = (
+        (axes[0], delta_load * 1e3, "Δ twist load ×10³", "YlOrRd"),
+        (axes[1], delta_slip, "Δ phase slip", "Purples"),
+    )
+    for ax, data, label, cmap in panels:
+        vmax = max(float(np.max(np.abs(data))), 1e-6)
+        if label.startswith("Δ twist"):
+            vmax = max(vmax, 0.05)
+        im = ax.imshow(
+            data,
+            aspect="auto",
+            origin="lower",
+            cmap=cmap,
+            vmin=0.0,
+            vmax=vmax,
+            extent=[-0.5, len(memories) - 0.5, -0.5, len(shapes) - 0.5],
+        )
+        ax.set_xticks(range(len(memories)))
+        ax.set_xticklabels(mem_labels, rotation=45, ha="right", fontsize=8)
+        ax.set_yticks(range(len(shapes)))
+        ax.set_yticklabels(shapes)
+        ax.set_xlabel("Recovery memory")
+        ax.set_title(label)
+        # highlight active memory column
+        ax.add_patch(plt.Rectangle(
+            (cur_col - 0.5, -0.5),
+            1.0,
+            len(shapes),
+            fill=False,
+            edgecolor="#2a9d8f",
+            lw=2.5,
+            ls="--",
+        ))
+        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+    fig.suptitle(
+        f"Dose equiv matrix  {int(n_pulses)}×p₀  "
+        f"{int(pump_steps)}+{int(gap_steps)}  fair continuous  τ={recovery_tau:.0f}",
+        fontsize=11,
+    )
     fig.tight_layout()
     return fig
 
@@ -238,8 +539,19 @@ def run_vqc_coupling(
     n_pulses: int = 3,
     pump_steps: int = 30,
     gap_steps: int = 20,
+    recovery_memory: float = 0.0,
+    recovery_tau: float = 25.0,
+    pulse_shape: str = "square",
+    dose_equivalence: bool = False,
 ) -> tuple:
-    """VQC coupling demo → (timeseries_img, heatmap_img, kick_img, summary_md)."""
+    """VQC coupling demo → (timeseries, propagation, kick, matrix_heatmap, summary_md)."""
+    from oam_flux.dose_equivalence import (
+        DoseEquivalenceConfig,
+        compare_delivery_metrics,
+        extract_delivery_metrics,
+        run_continuous_dose_matched,
+        run_pulsed_dose_matched,
+    )
     from oam_flux.pulse_train import PulseTrainConfig, run_vqc_pulse_train
 
     st = photon_state(ell=int(ell), lambda_nm=float(lambda_nm), energy_ev=float(energy_ev))
@@ -249,54 +561,103 @@ def run_vqc_coupling(
     f0 = st["frequency_thz"]
     p_nat = st["momentum_natural"]
 
-    if pulse_train:
-        pcfg = PulseTrainConfig(
-            n_pulses=int(n_pulses),
-            pump_steps=int(pump_steps),
-            gap_steps=int(gap_steps),
-        )
+    pcfg = PulseTrainConfig(
+        n_pulses=int(n_pulses),
+        pump_steps=int(pump_steps),
+        gap_steps=int(gap_steps),
+        recovery_memory=float(recovery_memory),
+        recovery_tau=float(recovery_tau),
+        pulse_shape=str(pulse_shape),
+    )
+
+    if dose_equivalence:
         sim_steps = pcfg.total_steps
+        state_cont, lattice_cont = _build_vqc_state(
+            ell=ell, kappa=kappa, kick_strength=kick_strength, sim_steps=sim_steps,
+            l_max=l_max, turbulence=turbulence, lambda_nm=lambda_nm,
+            e_scale=e_scale, recovery_tau=recovery_tau,
+        )
+        state_pulse, lattice = _build_vqc_state(
+            ell=ell, kappa=kappa, kick_strength=kick_strength, sim_steps=sim_steps,
+            l_max=l_max, turbulence=turbulence, lambda_nm=lambda_nm,
+            e_scale=e_scale, recovery_tau=recovery_tau,
+        )
+        dcfg = DoseEquivalenceConfig(
+            n_pulses=int(n_pulses), p0=p0, max_steps=sim_steps,
+        )
+        run_continuous_dose_matched(state_cont, dcfg, pcfg)
+        run_pulsed_dose_matched(state_pulse, pcfg)
+        cont_m = extract_delivery_metrics(state_cont)
+        pulse_m = extract_delivery_metrics(state_pulse)
+        delta = compare_delivery_metrics(cont_m, pulse_m)
+        state = state_pulse
+        steps = int(pulse_m["sim_steps"])
+        ts_img = _fig_to_pil(_plot_equivalence_comparison(
+            state_cont.history,
+            state_pulse.history,
+            title=(
+                f"Dose equiv  ℓ={ell}  κ={kappa:.3f}  "
+                f"{int(n_pulses)}×p₀  λ={lambda_nm:.0f} nm"
+            ),
+            p0=p0,
+        ))
+        md_equiv = _equivalence_summary_md(
+            cont_m, pulse_m, delta,
+            n_pulses=int(n_pulses), p0=p0,
+            pump_steps=int(pump_steps), gap_steps=int(gap_steps),
+            recovery_tau=float(recovery_tau), pulse_shape=str(pulse_shape),
+        )
+        mem_grid = np.linspace(0.0, 1.0, 11)
+        delta_load, delta_slip = _compute_dose_equivalence_matrix(
+            ell=ell, kappa=kappa, kick_strength=kick_strength,
+            l_max=l_max, turbulence=turbulence, lambda_nm=lambda_nm,
+            e_scale=e_scale, recovery_tau=float(recovery_tau),
+            n_pulses=int(n_pulses), pump_steps=int(pump_steps), gap_steps=int(gap_steps),
+            p0=p0, memories=mem_grid,
+        )
+        matrix_img = _fig_to_pil(_plot_dose_equivalence_matrix_heatmap(
+            mem_grid, delta_load, delta_slip,
+            current_memory=float(recovery_memory),
+            n_pulses=int(n_pulses), pump_steps=int(pump_steps), gap_steps=int(gap_steps),
+            recovery_tau=float(recovery_tau),
+        ))
+    elif pulse_train:
+        sim_steps = pcfg.total_steps
+        state, lattice = _build_vqc_state(
+            ell=ell, kappa=kappa, kick_strength=kick_strength, sim_steps=sim_steps,
+            l_max=l_max, turbulence=turbulence, lambda_nm=lambda_nm,
+            e_scale=e_scale, recovery_tau=recovery_tau,
+        )
+        steps = run_vqc_pulse_train(state, pcfg)
+        mode = f"pulse×{int(n_pulses)} ({int(pump_steps)}+{int(gap_steps)}, {pulse_shape})"
+        ts_img = _fig_to_pil(_plot_momentum_history(
+            state.history,
+            title=(
+                f"VQC {mode}  ℓ={ell}  κ={kappa:.3f}  λ={lambda_nm:.0f} nm  "
+                f"E={e0:.3f} eV  p₀={p0:.5f}"
+            ),
+        ))
+        md_equiv = None
+        matrix_img = None
     else:
         sim_steps = int(n_steps)
-
-    lattice = TwistLattice(nx=20, kappa=kappa)
-    photonics = PhotonicsConfig(
-        l_max=l_max,
-        n_z=min(sim_steps, 200),
-        nr=256,
-        turbulence=turbulence,
-        lambda_nm=lambda_nm,
-    )
-    state = VQCCouplingState.from_config(
-        lattice,
-        photonics,
-        ell=ell,
-        coupling_cfg={
-            "kick_strength": kick_strength,
-            "flywheel_sites": 4,
-            "conserve_momentum": True,
-            "energy_scale": e_scale,
-        },
-    )
-    if pulse_train:
-        steps = run_vqc_pulse_train(state, pcfg)
-    else:
+        state, lattice = _build_vqc_state(
+            ell=ell, kappa=kappa, kick_strength=kick_strength, sim_steps=sim_steps,
+            l_max=l_max, turbulence=turbulence, lambda_nm=lambda_nm,
+            e_scale=e_scale, recovery_tau=recovery_tau,
+        )
         steps = min(sim_steps, state.propagation.n_z)
         for step in range(steps):
             run_vqc_coupling_step(state, step)
-
-    mode = (
-        f"pulse×{int(n_pulses)} ({int(pump_steps)}+{int(gap_steps)})"
-        if pulse_train
-        else "continuous"
-    )
-    ts_img = _fig_to_pil(_plot_momentum_history(
-        state.history,
-        title=(
-            f"VQC {mode}  ℓ={ell}  κ={kappa:.3f}  λ={lambda_nm:.0f} nm  "
-            f"E={e0:.3f} eV  p₀={p0:.5f}"
-        ),
-    ))
+        ts_img = _fig_to_pil(_plot_momentum_history(
+            state.history,
+            title=(
+                f"VQC continuous  ℓ={ell}  κ={kappa:.3f}  λ={lambda_nm:.0f} nm  "
+                f"E={e0:.3f} eV  p₀={p0:.5f}"
+            ),
+        ))
+        md_equiv = None
+        matrix_img = None
 
     fig2, ax2 = plt.subplots(figsize=(8, 3))
     ax2.imshow(
@@ -331,22 +692,32 @@ def run_vqc_coupling(
     kick_img = _fig_to_pil(fig3)
 
     last = state.history[-1] if state.history else {}
-    md = (
-        f"### VQC coupling — ℓ={ell} · κ={kappa:.4f} · λ={lambda_nm:.0f} nm\n"
-        f"- **E₀** = {e0:.4f} eV  (E = hc/λ) · **f** = {f0:.2f} THz\n"
-        f"- **p₀** = {p0:.6f} ×10⁻²⁷ kg·m/s  (p = h|ℓ|/λ) · **p/(ℏk)** = {p_nat:.3f}\n"
-        f"{_kick_scale_line(kick_strength, e_scale)}"
-        f"{_pulse_train_summary_line(state)}"
-        f"- **Back-reaction** η_final = **{last.get('back_reaction_coupling', 1.0):.3f}** · "
-        f"phase slip = **{last.get('cumulative_phase_slip', 0.0):.4f}**\n"
-        f"{_recovery_summary_line(state.history)}"
-        f"- Final ⟨θ⟩ = **{state.lattice.mean_twist:.4f}**\n"
-        f"- p_photon final = **{last.get('photon_momentum', 0):.4f}**\n"
-        f"- p_lattice received = **{last.get('lattice_received', 0):.4f}**\n"
-        f"- Residual R = **{RESIDUAL_R:.6f}** (mystery)\n\n"
-        f"{_conservation_badge(state.history)}\n"
-    )
-    return ts_img, heat_img, kick_img, md
+    if dose_equivalence and md_equiv is not None:
+        md = (
+            md_equiv
+            + f"\n**Photon readout:** p₀ = {p0:.6f} · E₀ = {e0:.4f} eV · "
+            f"p/(ℏk) = {p_nat:.3f}\n"
+            f"{_kick_scale_line(kick_strength, e_scale)}"
+            f"- **Matrix heatmap:** shape × memory (0→1) · dashed column = active memory\n"
+        )
+    else:
+        md = (
+            f"### VQC coupling — ℓ={ell} · κ={kappa:.4f} · λ={lambda_nm:.0f} nm\n"
+            f"- **E₀** = {e0:.4f} eV  (E = hc/λ) · **f** = {f0:.2f} THz\n"
+            f"- **p₀** = {p0:.6f} ×10⁻²⁷ kg·m/s  (p = h|ℓ|/λ) · **p/(ℏk)** = {p_nat:.3f}\n"
+            f"{_kick_scale_line(kick_strength, e_scale)}"
+            f"{_pulse_train_summary_line(state)}"
+            f"{_pulse_cumulative_block(state.history) if pulse_train else ''}"
+            f"- **Back-reaction** η_final = **{last.get('back_reaction_coupling', 1.0):.3f}** · "
+            f"phase slip = **{last.get('cumulative_phase_slip', 0.0):.4f}**\n"
+            f"{_recovery_summary_line(state.history, recovery_tau=float(recovery_tau))}"
+            f"- Final ⟨θ⟩ = **{state.lattice.mean_twist:.4f}**\n"
+            f"- p_photon final = **{last.get('photon_momentum', 0):.4f}**\n"
+            f"- p_lattice received = **{last.get('lattice_received', 0):.4f}**\n"
+            f"- Residual R = **{RESIDUAL_R:.6f}** (mystery)\n\n"
+            f"{_conservation_badge(state.history)}\n"
+        )
+    return ts_img, heat_img, kick_img, matrix_img, md
 
 
 def run_emergence(
