@@ -5,6 +5,7 @@ from oam_flux.lattice import TwistLattice
 from oam_flux.momentum import (
     DEFAULT_CONSERVATION_TOLERANCE,
     conservation_check,
+    effective_kick_strength,
     energy_scale_from_ev,
     is_momentum_conserved,
     lambda_nm_from_ev,
@@ -47,6 +48,11 @@ def test_energy_lambda_coupling():
     assert lam == pytest.approx(800.0, rel=0.01)
     scale = energy_scale_from_ev(energy_ev=2.0 * e, lambda_nm=800.0)
     assert scale == pytest.approx(2.0, rel=1e-6)
+
+
+def test_effective_kick_scales_with_energy():
+    assert effective_kick_strength(0.08, 1.0) == pytest.approx(0.08)
+    assert effective_kick_strength(0.08, 2.0) == pytest.approx(0.16)
 
 
 def test_photon_state_natural_units():

@@ -15,6 +15,7 @@ class VQCCouplingState:
     propagation: PropagationResult
     ell: int
     kick_strength: float = 0.08
+    energy_scale: float = 1.0
     flywheel_sites: int = 4
     conserve_momentum: bool = True
     z_index: int = 0
@@ -43,6 +44,7 @@ class VQCCouplingState:
             propagation=propagation,
             ell=ell,
             kick_strength=float(coupling_cfg.get("kick_strength", 0.08)),
+            energy_scale=e_scale,
             flywheel_sites=int(coupling_cfg.get("flywheel_sites", 4)),
             conserve_momentum=bool(coupling_cfg.get("conserve_momentum", True)),
             lambda_nm=lam,
@@ -79,13 +81,16 @@ class VQCCouplingState:
 
 def run_vqc_coupling_step(state: VQCCouplingState, step: int) -> None:
     """Advance one step: deposit VQC flux at current z, relax lattice, step z."""
+    from .momentum import effective_kick_strength
+
     z_idx = min(state.z_index, state.propagation.n_z - 1)
+    k_eff = effective_kick_strength(state.kick_strength, state.energy_scale)
     kick, deposited = deposit_on_flywheels(
         state.lattice,
         state.propagation,
         ell=state.ell,
         z_index=z_idx,
-        kick_strength=state.kick_strength,
+        kick_strength=k_eff,
         flywheel_sites=state.flywheel_sites,
     )
 

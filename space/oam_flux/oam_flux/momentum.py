@@ -79,6 +79,11 @@ def momentum_natural_units(
     return abs(int(ell)) * float(energy_scale)
 
 
+def effective_kick_strength(kick_strength: float, energy_scale: float) -> float:
+    """User kick knob scaled by packet energy: κ_eff = κ · energy_scale."""
+    return float(kick_strength) * max(float(energy_scale), 0.0)
+
+
 def photon_state(
     *,
     ell: int,

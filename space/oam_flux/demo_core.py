@@ -35,6 +35,7 @@ from oam_flux.lattice import TwistLattice
 from oam_flux.momentum import (
     DEFAULT_CONSERVATION_TOLERANCE,
     clip_lambda_nm,
+    effective_kick_strength,
     energy_scale_from_ev,
     is_momentum_conserved,
     lambda_nm_from_ev,
@@ -98,6 +99,14 @@ def couple_from_energy(energy_ev: float, ell: int, lambda_nm: float, lock: str) 
     if lock == "E drives λ":
         lam = clip_lambda_nm(lambda_nm_from_ev(energy_ev=e, energy_scale=1.0))
     return lam, format_photon_readout(int(ell), lam, e)
+
+
+def _kick_scale_line(kick_strength: float, energy_scale: float) -> str:
+    k_eff = effective_kick_strength(kick_strength, energy_scale)
+    return (
+        f"- **energy_scale** = {energy_scale:.4f} · "
+        f"**κ_eff** = {k_eff:.4f} (κ × energy_scale)\n"
+    )
 
 
 def couple_from_ell(ell: int, lambda_nm: float, energy_ev: float) -> str:
@@ -217,10 +226,13 @@ def run_vqc_coupling(
 
     from oam_flux.flux_deposit import build_flux_kick
     mid = steps // 2
-    kick, _ = build_flux_kick(lattice, state.propagation, ell=ell, z_index=mid, kick_strength=kick_strength)
+    k_eff = effective_kick_strength(kick_strength, e_scale)
+    kick, _ = build_flux_kick(
+        lattice, state.propagation, ell=ell, z_index=mid, kick_strength=k_eff,
+    )
     fig3, ax3 = plt.subplots(figsize=(5, 4))
     ax3.imshow(kick[kick.shape[0] // 2], origin="lower", cmap="RdBu_r")
-    ax3.set_title(f"Flux kick slice z={mid}")
+    ax3.set_title(f"Flux kick slice z={mid}  (κ_eff={k_eff:.3f})")
     fig3.tight_layout()
     kick_img = _fig_to_pil(fig3)
 
@@ -229,6 +241,7 @@ def run_vqc_coupling(
         f"### VQC coupling — ℓ={ell} · κ={kappa:.4f} · λ={lambda_nm:.0f} nm\n"
         f"- **E₀** = {e0:.4f} eV  (E = hc/λ) · **f** = {f0:.2f} THz\n"
         f"- **p₀** = {p0:.6f} ×10⁻²⁷ kg·m/s  (p = h|ℓ|/λ) · **p/(ℏk)** = {p_nat:.3f}\n"
+        f"{_kick_scale_line(kick_strength, e_scale)}"
         f"- Final ⟨θ⟩ = **{state.lattice.mean_twist:.4f}**\n"
         f"- p_photon final = **{last.get('photon_momentum', 0):.4f}**\n"
         f"- p_lattice received = **{last.get('lattice_received', 0):.4f}**\n"
@@ -344,6 +357,8 @@ def run_analytic_coupling(
         f"### Analytic momentum ledger\n"
         f"- **ℓ** = {ell} · **λ** = {lambda_nm:.0f} nm · **κ** = {kappa:.4f}\n"
         f"- **E₀** = {e0:.4f} eV · **p₀** = {p0:.6f} ×10⁻²⁷ kg·m/s · **p/(ℏk)** = {p_nat:.3f}\n"
+        f"{_kick_scale_line(0.08, e_scale)}"
+        f"- *Analytic kicks scale via p(E); κ_eff shown for comparison.*\n"
         f"- Final ⟨θ⟩ = **{state.lattice.mean_twist:.4f}**\n"
         f"- Δp_lattice = **{last.get('lattice_received', 0):.4f}**\n\n"
         f"{_conservation_badge(state.history)}\n"
@@ -405,8 +420,10 @@ def run_eddington(
     n_flywheels: int,
     n_steps: int,
     kick_strength: float,
+    energy_ev: float,
 ) -> tuple:
     """Mini-Eddington flywheel cluster probe."""
+    st = photon_state(ell=int(ell), lambda_nm=float(lambda_nm), energy_ev=float(energy_ev))
     result = run_eddington_probe(
         kappa=float(kappa),
         ell=int(ell),
@@ -414,6 +431,7 @@ def run_eddington(
         n_flywheels=int(n_flywheels),
         n_steps=int(n_steps),
         kick_strength=float(kick_strength),
+        energy_ev=float(energy_ev),
     )
 
     import numpy as np
@@ -434,7 +452,10 @@ def run_eddington(
         )
     axes[0].set_ylabel("momentum")
     axes[0].set_xlabel("step")
-    axes[0].set_title(f"Mini-Eddington  ℓ={ell}  κ={kappa:.3f}  flywheels={n_flywheels}")
+    axes[0].set_title(
+        f"Mini-Eddington  ℓ={ell}  κ={kappa:.3f}  κ_eff={result.effective_kick:.3f}  "
+        f"flywheels={n_flywheels}"
+    )
     axes[0].legend(fontsize=8)
     axes[0].grid(alpha=0.3)
 
@@ -486,7 +507,9 @@ def run_eddington(
     )
     md = (
         f"### Mini-Eddington probe\n"
-        f"- **ℓ** = {ell} · **κ** = {kappa:.4f} · **λ** = {lambda_nm:.0f} nm\n"
+        f"- **ℓ** = {ell} · **κ** = {kappa:.4f} · **λ** = {lambda_nm:.0f} nm · "
+        f"**E** = {st['energy_ev']:.4f} eV\n"
+        f"{_kick_scale_line(kick_strength, result.energy_scale)}"
         f"- Flywheels = **{n_flywheels}** · unstable sites = **{unstable}**\n"
         f"- Total outward flux = **{result.total_outward_flux:.4f}**\n"
         f"{wind_note}"

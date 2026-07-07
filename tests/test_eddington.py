@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from oam_flux.eddington import binding_at_site, run_eddington_probe
 
@@ -22,6 +23,17 @@ def test_eddington_probe_runs():
     meta = result.to_dict()
     assert "total_outward_flux" in meta
     assert "wind_z" in meta
+
+
+def test_eddington_kicks_scale_with_energy():
+    low = run_eddington_probe(
+        kappa=0.80, ell=4, n_flywheels=6, n_steps=60, kick_strength=0.12, energy_scale=1.0,
+    )
+    high = run_eddington_probe(
+        kappa=0.80, ell=4, n_flywheels=6, n_steps=60, kick_strength=0.12, energy_scale=2.0,
+    )
+    assert high.effective_kick == pytest.approx(2.0 * low.effective_kick)
+    assert high.total_outward_flux >= low.total_outward_flux
 
 
 def test_eddington_wind_along_hopf_fiber():

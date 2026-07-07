@@ -151,6 +151,7 @@ with gr.Blocks(title="OAM–Flux", theme=gr.themes.Soft(primary_hue="purple")) a
                 ed_ell = gr.Slider(-8, 8, value=3, step=1, label="ℓ")
                 ed_kappa = gr.Slider(0.75, 0.95, value=0.85, step=0.01, label="κ")
                 ed_lambda = gr.Slider(400, 2000, value=1550, step=10, label="λ (nm)")
+                ed_energy = gr.Slider(0.62, 3.2, value=_e0, step=0.01, label="E (eV, synced)")
             with gr.Row():
                 ed_flywheels = gr.Slider(2, 10, value=6, step=1, label="flywheel sites")
                 ed_steps = gr.Slider(20, 150, value=80, step=10, label="steps")
@@ -180,7 +181,7 @@ with gr.Blocks(title="OAM–Flux", theme=gr.themes.Soft(primary_hue="purple")) a
         return int(ell), float(kappa), int(lmax), badge
 
     def _sync_vqc_to_helix_ed(ell, lam, energy):
-        return int(ell), int(ell), float(lam), float(energy)
+        return int(ell), int(ell), float(lam), float(energy), float(energy)
 
     vqc_lambda.change(
         couple_from_lambda,
@@ -189,7 +190,7 @@ with gr.Blocks(title="OAM–Flux", theme=gr.themes.Soft(primary_hue="purple")) a
     ).then(
         _sync_vqc_to_helix_ed,
         [vqc_ell, vqc_lambda, vqc_energy],
-        [hx_ell, ed_ell, ed_lambda, an_energy],
+        [hx_ell, ed_ell, ed_lambda, an_energy, ed_energy],
     ).then(
         lambda lam: lam,
         [vqc_lambda],
@@ -203,7 +204,7 @@ with gr.Blocks(title="OAM–Flux", theme=gr.themes.Soft(primary_hue="purple")) a
     ).then(
         _sync_vqc_to_helix_ed,
         [vqc_ell, vqc_lambda, vqc_energy],
-        [hx_ell, ed_ell, ed_lambda, an_energy],
+        [hx_ell, ed_ell, ed_lambda, an_energy, ed_energy],
     ).then(
         lambda lam: lam,
         [vqc_lambda],
@@ -250,7 +251,7 @@ with gr.Blocks(title="OAM–Flux", theme=gr.themes.Soft(primary_hue="purple")) a
     )
     ed_btn.click(
         run_eddington,
-        [ed_ell, ed_kappa, ed_lambda, ed_flywheels, ed_steps, ed_kick],
+        [ed_ell, ed_kappa, ed_lambda, ed_flywheels, ed_steps, ed_kick, ed_energy],
         [ed_plot, ed_md],
     )
     an_btn.click(

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .lattice import TwistLattice
-from .momentum import oam_kinetic_momentum
+from .momentum import effective_kick_strength, energy_scale_from_ev, oam_kinetic_momentum
 from .vqc_coupling import VQCCouplingState, run_vqc_coupling_step
 from .vqc_photonics import PhotonicsConfig
 
@@ -28,6 +28,9 @@ class EddingtonResult:
     kappa: float
     ell: int
     n_sites: int
+    energy_scale: float = 1.0
+    kick_strength: float = 0.08
+    effective_kick: float = 0.08
     sites: list[FlywheelSite] = field(default_factory=list)
     history: list[dict[str, float]] = field(default_factory=list)
     limit_exceeded: bool = False
@@ -45,6 +48,8 @@ class EddingtonResult:
             "limit_exceeded": self.limit_exceeded,
             "unstable_sites": float(unstable),
             "total_outward_flux": self.total_outward_flux,
+            "energy_scale": self.energy_scale,
+            "effective_kick": self.effective_kick,
             "wind_x": float(w[0]),
             "wind_y": float(w[1]),
             "wind_z": float(w[2]),
@@ -91,11 +96,17 @@ def run_eddington_probe(
     n_flywheels: int = 6,
     n_steps: int = 80,
     kick_strength: float = 0.08,
+    energy_scale: float = 1.0,
+    energy_ev: float | None = None,
     l_max: int = 6,
     nx: int = 20,
 ) -> EddingtonResult:
     """Pump VQC flux into flywheel cluster; detect Eddington-style outward flux."""
     from .helix_viz import hopf_tangent_at_lattice_site
+
+    if energy_ev is not None:
+        energy_scale = energy_scale_from_ev(energy_ev=float(energy_ev), lambda_nm=lambda_nm)
+    k_eff = effective_kick_strength(kick_strength, energy_scale)
 
     lattice = TwistLattice(nx=nx, kappa=kappa)
     photonics = PhotonicsConfig(l_max=l_max, n_z=n_steps, nr=256, lambda_nm=lambda_nm)
@@ -107,14 +118,22 @@ def run_eddington_probe(
             "kick_strength": kick_strength,
             "flywheel_sites": n_flywheels,
             "conserve_momentum": True,
+            "energy_scale": energy_scale,
         },
     )
 
     indices = lattice.flywheel_indices(n_flywheels)
     sites = [FlywheelSite(index=idx) for idx in indices]
-    result = EddingtonResult(kappa=kappa, ell=ell, n_sites=n_flywheels, sites=sites)
+    result = EddingtonResult(
+        kappa=kappa,
+        ell=ell,
+        n_sites=n_flywheels,
+        energy_scale=energy_scale,
+        kick_strength=kick_strength,
+        effective_kick=k_eff,
+        sites=sites,
+    )
 
-    p0 = oam_kinetic_momentum(energy_scale=1.0, ell=ell, lambda_nm=lambda_nm)
     steps = min(n_steps, state.propagation.n_z)
 
     for step in range(steps):
@@ -126,7 +145,7 @@ def run_eddington_probe(
             state.propagation,
             ell=ell,
             z_index=z_idx,
-            kick_strength=kick_strength,
+            kick_strength=k_eff,
             flywheel_sites=n_flywheels,
         )
 
