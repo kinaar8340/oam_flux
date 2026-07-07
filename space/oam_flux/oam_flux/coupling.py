@@ -17,7 +17,12 @@ class CouplingState:
     kick_strength: float = 0.08
     flywheel_sites: int = 4
     conserve_momentum: bool = True
+    initial_total_momentum: float = 0.0
     history: list[dict[str, float]] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if self.initial_total_momentum == 0.0:
+            self.initial_total_momentum = self.photon.momentum
 
     def encounter_mask(self) -> np.ndarray:
         """Gaussian envelope centered on flywheel sites."""
@@ -40,13 +45,25 @@ class CouplingState:
         return self.kick_strength * flux * mask
 
     def record(self, step: int) -> None:
+        from .momentum import conservation_check
+
+        p0 = self.initial_total_momentum
+        check = conservation_check(
+            photon_p=self.photon.momentum,
+            ledger=self.lattice.momentum_ledger,
+            initial_total=p0,
+        )
         self.history.append(
             {
                 "step": float(step),
+                "initial_total": p0,
                 "mean_twist": self.lattice.mean_twist,
                 "twist_variance": self.lattice.twist_variance,
                 "photon_z": self.photon.z,
-                "photon_momentum": self.photon.momentum,
+                "photon_momentum": check["photon_p"],
+                "lattice_received": check["lattice_received"],
+                "total_momentum": check["total_now"],
+                "conservation_residual": check["conservation_residual"],
                 "momentum_ledger": self.lattice.momentum_ledger,
             }
         )
@@ -58,9 +75,8 @@ def run_coupling_step(state: CouplingState, step: int, *, dz: float = 0.025) -> 
     p_before = state.photon.momentum
 
     if state.conserve_momentum:
-        state.lattice.apply_kick(kick, photon_momentum=p_before)
-        # photon transfers momentum to lattice; packet depletes
-        state.photon.energy_scale = max(0.0, state.photon.energy_scale - p_before * state.kick_strength)
+        delta_p = state.photon.transfer_momentum(p_before * state.kick_strength)
+        state.lattice.apply_kick(kick, photon_momentum=delta_p)
     else:
         state.lattice.theta = np.clip(state.lattice.theta + kick, 0.01, 2 * np.pi - 0.01)
 

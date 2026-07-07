@@ -67,12 +67,17 @@ with gr.Blocks(title="OAM–Flux", theme=gr.themes.Soft(primary_hue="purple")) a
 
     with gr.Tabs():
         with gr.Tab("VQC Coupling"):
-            gr.Markdown("v0.2 — VQC vectorized OAM propagation deposited on lattice fibers.")
+            gr.Markdown(
+                "**v0.2+** — Multi-ℓ VQC propagation → Hopf fiber flux kicks. "
+                "Momentum **p ∝ |ℓ|/λ**; ledger tracks Δp_lattice = −Δp_photon."
+            )
+            vqc_status = gr.Markdown("*ℓ and κ link directly to Emergence tab probes.*")
             with gr.Row():
-                vqc_ell = gr.Slider(-8, 8, value=3, step=1, label="ℓ (OAM)")
-                vqc_kappa = gr.Slider(0.75, 0.95, value=0.85, step=0.01, label="κ")
+                vqc_ell = gr.Slider(-8, 8, value=3, step=1, label="ℓ (OAM quantum number)")
+                vqc_kappa = gr.Slider(0.75, 0.95, value=0.85, step=0.01, label="κ (gauge damping)")
+                vqc_lambda = gr.Slider(400, 2000, value=1550, step=10, label="λ (nm)")
+            with gr.Row():
                 vqc_kick = gr.Slider(0.01, 0.2, value=0.08, step=0.01, label="kick strength")
-            with gr.Row():
                 vqc_steps = gr.Slider(20, 200, value=80, step=10, label="steps")
                 vqc_lmax = gr.Slider(3, 12, value=6, step=1, label="L_max")
                 vqc_turb = gr.Slider(0.0, 0.5, value=0.0, step=0.05, label="turbulence")
@@ -84,9 +89,20 @@ with gr.Blocks(title="OAM–Flux", theme=gr.themes.Soft(primary_hue="purple")) a
                 vqc_kick_img = gr.Image(label="Flux kick slice")
                 vqc_md = gr.Markdown()
 
+            def _vqc_preview(ell, kappa, lam):
+                from oam_flux.momentum import oam_kinetic_momentum
+                p = oam_kinetic_momentum(energy_scale=1.0, ell=int(ell), lambda_nm=lam)
+                return (
+                    f"**Active:** ℓ={int(ell)} · κ={kappa:.3f} · λ={lam:.0f} nm · "
+                    f"**p₀ ≈ {p:.6f}** (|ℓ|/λ) · R_ref={0.137486:.6f}"
+                )
+
+            for ctrl in (vqc_ell, vqc_kappa, vqc_lambda):
+                ctrl.change(_vqc_preview, [vqc_ell, vqc_kappa, vqc_lambda], [vqc_status])
+
             vqc_btn.click(
                 run_vqc_coupling,
-                [vqc_ell, vqc_kappa, vqc_kick, vqc_steps, vqc_lmax, vqc_turb],
+                [vqc_ell, vqc_kappa, vqc_kick, vqc_steps, vqc_lmax, vqc_turb, vqc_lambda],
                 [vqc_ts, vqc_heat, vqc_kick_img, vqc_md],
             )
 
@@ -112,15 +128,20 @@ with gr.Blocks(title="OAM–Flux", theme=gr.themes.Soft(primary_hue="purple")) a
             )
 
         with gr.Tab("Analytic"):
-            gr.Markdown("v0.1 — analytic OAM packet coupling (fast baseline).")
+            gr.Markdown("v0.1 — analytic OAM packet; photon vs lattice momentum with conservation check.")
             with gr.Row():
                 an_ell = gr.Slider(-8, 8, value=3, step=1, label="ℓ")
                 an_kappa = gr.Slider(0.75, 0.95, value=0.85, step=0.01, label="κ")
+                an_lambda = gr.Slider(400, 2000, value=1550, step=10, label="λ (nm)")
                 an_steps = gr.Slider(50, 500, value=150, step=50, label="steps")
             an_btn = gr.Button("Run analytic coupling", variant="secondary")
-            an_img = gr.Image(label="Timeseries")
+            an_img = gr.Image(label="Momentum + twist timeseries")
             an_md = gr.Markdown()
-            an_btn.click(run_analytic_coupling, [an_ell, an_kappa, an_steps], [an_img, an_md])
+            an_btn.click(
+                run_analytic_coupling,
+                [an_ell, an_kappa, an_steps, an_lambda],
+                [an_img, an_md],
+            )
 
         with gr.Tab("About"):
             gr.Markdown(ABOUT_MD)

@@ -18,6 +18,9 @@ class VQCCouplingState:
     flywheel_sites: int = 4
     conserve_momentum: bool = True
     z_index: int = 0
+    lambda_nm: float = 1550.0
+    photon_reservoir: float = 0.0
+    initial_total_momentum: float = 0.0
     history: list[dict[str, float]] = field(default_factory=list)
 
     @classmethod
@@ -30,6 +33,10 @@ class VQCCouplingState:
         coupling_cfg: dict,
     ) -> VQCCouplingState:
         propagation = propagate_multi_ell_vectorized(photonics_cfg)
+        from .momentum import oam_kinetic_momentum
+
+        lam = float(getattr(photonics_cfg, "lambda_nm", 1550.0))
+        p0 = oam_kinetic_momentum(energy_scale=1.0, ell=ell, lambda_nm=lam)
         return cls(
             lattice=lattice,
             propagation=propagation,
@@ -37,10 +44,20 @@ class VQCCouplingState:
             kick_strength=float(coupling_cfg.get("kick_strength", 0.08)),
             flywheel_sites=int(coupling_cfg.get("flywheel_sites", 4)),
             conserve_momentum=bool(coupling_cfg.get("conserve_momentum", True)),
+            lambda_nm=lam,
+            photon_reservoir=p0,
+            initial_total_momentum=p0,
         )
 
     def record(self, step: int) -> None:
+        from .momentum import conservation_check
+
         z_idx = min(self.z_index, self.propagation.n_z - 1)
+        check = conservation_check(
+            photon_p=self.photon_reservoir,
+            ledger=self.lattice.momentum_ledger,
+            initial_total=self.initial_total_momentum,
+        )
         self.history.append(
             {
                 "step": float(step),
@@ -49,6 +66,11 @@ class VQCCouplingState:
                 "mode_intensity": self.propagation.mode_intensity(self.ell, z_idx),
                 "mean_twist": self.lattice.mean_twist,
                 "twist_variance": self.lattice.twist_variance,
+                "photon_momentum": check["photon_p"],
+                "lattice_received": check["lattice_received"],
+                "total_momentum": check["total_now"],
+                "conservation_residual": check["conservation_residual"],
+                "initial_total": self.initial_total_momentum,
                 "momentum_ledger": self.lattice.momentum_ledger,
             }
         )
@@ -67,7 +89,9 @@ def run_vqc_coupling_step(state: VQCCouplingState, step: int) -> None:
     )
 
     if state.conserve_momentum:
-        state.lattice.apply_kick(kick, photon_momentum=deposited)
+        delta_p = min(deposited, state.photon_reservoir)
+        state.photon_reservoir = max(0.0, state.photon_reservoir - delta_p)
+        state.lattice.apply_kick(kick, photon_momentum=delta_p)
     else:
         import numpy as np
         state.lattice.theta = np.clip(state.lattice.theta + kick, 0.01, 2 * np.pi - 0.01)

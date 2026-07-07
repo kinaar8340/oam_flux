@@ -18,11 +18,33 @@ class OAMPacket:
     w0: float = 1.0
     energy_scale: float = 1.0
     z: float = 0.0
+    _momentum_p: float | None = None
 
     @property
     def momentum(self) -> float:
-        """Normalized p ∝ E/c; energy_scale is the sole knob in this reduced model."""
-        return self.energy_scale
+        """p ∝ E/c · |ℓ|/λ — explicit OAM kinetic momentum."""
+        if self._momentum_p is not None:
+            return self._momentum_p
+        from .momentum import oam_kinetic_momentum
+        return oam_kinetic_momentum(
+            energy_scale=self.energy_scale,
+            ell=self.ell,
+            lambda_nm=self.lambda_nm,
+        )
+
+    def transfer_momentum(self, requested: float) -> float:
+        """Transfer up to `requested` momentum to lattice; return actual Δp."""
+        actual = min(max(requested, 0.0), self.momentum)
+        current = self.momentum
+        if current > 1e-15:
+            # Scale energy with momentum fraction for consistency
+            self.energy_scale *= (current - actual) / current
+        self._momentum_p = current - actual
+        return actual
+
+    @property
+    def wavelength_um(self) -> float:
+        return self.lambda_nm * 1e-3
 
     @property
     def helical_phase_gradient(self) -> float:

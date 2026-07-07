@@ -12,6 +12,7 @@ from scipy.special import factorial, genlaguerre
 class PhotonicsConfig:
     l_max: int = 8
     w0: float = 1.0
+    lambda_nm: float = 1550.0
     nr: int = 512
     z_start: float = 0.0
     z_end: float = 5.0
