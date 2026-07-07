@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import os
 
 import gradio as gr
 
@@ -64,7 +65,7 @@ Synthesis of [toe]({TOE_URL}) · [vqc_sims_public]({VQC_URL}) · [mystery]({MYST
 GitHub: [{GITHUB_URL}]({GITHUB_URL}) · {get_build_label()}
 """
 
-with gr.Blocks(title="OAM–Flux", theme=gr.themes.Soft(primary_hue="purple")) as demo:
+with gr.Blocks(title="OAM–Flux") as demo:
     gr.Markdown(
         f"# 🌀 OAM–Flux\n"
         f"Helical photon flux on gauged Hopf lattice flywheels · "
@@ -301,4 +302,9 @@ with gr.Blocks(title="OAM–Flux", theme=gr.themes.Soft(primary_hue="purple")) a
     )
 
 if __name__ == "__main__":
-    demo.launch(server_name="127.0.0.1", server_port=7861)
+    launch_kwargs: dict = {"theme": gr.themes.Soft(primary_hue="purple")}
+    # Local dev only — HF Spaces sets GRADIO_SERVER_PORT and proxies SSR itself.
+    if not os.getenv("SPACE_ID"):
+        launch_kwargs["server_name"] = "127.0.0.1"
+        launch_kwargs["server_port"] = 7861
+    demo.launch(**launch_kwargs)
