@@ -1,11 +1,18 @@
-"""Momentum accounting: photon kinetic flux ↔ lattice ledger."""
+"""Momentum and energy accounting: photon kinetic flux ↔ lattice ledger."""
 
 from __future__ import annotations
 
-# SI Planck constant (J·s); display scale maps kg·m/s → ×10⁻²⁷ kg·m/s for optical λ.
+import math
+
+# SI constants; momentum display maps kg·m/s → ×10⁻²⁷ kg·m/s for optical λ.
 H_PLANCK_J_S = 6.62607015e-34
+HBAR_J_S = H_PLANCK_J_S / (2.0 * math.pi)
+C_M_S = 299792458.0
+HC_EV_NM = 1239.841984332893  # hc in eV·nm (E[eV] = HC_EV_NM / λ[nm])
 MOMENTUM_DISPLAY_SCALE = 1e27
 DEFAULT_CONSERVATION_TOLERANCE = 0.005  # 0.5 % of p₀
+LAMBDA_NM_MIN = 400.0
+LAMBDA_NM_MAX = 2000.0
 
 
 def oam_kinetic_momentum(
@@ -31,6 +38,67 @@ def oam_kinetic_momentum(
         / lambda_m
     )
     return p_si * MOMENTUM_DISPLAY_SCALE
+
+
+def photon_energy_ev(*, lambda_nm: float, energy_scale: float = 1.0) -> float:
+    """Photon energy E = hc/λ in eV (scaled by ``energy_scale``)."""
+    lam = max(float(lambda_nm), 1.0)
+    return HC_EV_NM / lam * float(energy_scale)
+
+
+def photon_frequency_thz(*, lambda_nm: float) -> float:
+    """Optical frequency f = c/λ in THz."""
+    lambda_m = max(float(lambda_nm), 1.0) * 1e-9
+    return C_M_S / lambda_m / 1e12
+
+
+def energy_scale_from_ev(*, energy_ev: float, lambda_nm: float) -> float:
+    """Packet energy scale relative to single-photon E = hc/λ at ``lambda_nm``."""
+    ref = photon_energy_ev(lambda_nm=lambda_nm, energy_scale=1.0)
+    return max(float(energy_ev), 1e-12) / ref
+
+
+def lambda_nm_from_ev(*, energy_ev: float, energy_scale: float = 1.0) -> float:
+    """Invert E = hc/λ for wavelength (nm) at fixed ``energy_scale``."""
+    e = max(float(energy_ev), 1e-12) / max(float(energy_scale), 1e-12)
+    return HC_EV_NM / e
+
+
+def clip_lambda_nm(lambda_nm: float) -> float:
+    return float(max(LAMBDA_NM_MIN, min(LAMBDA_NM_MAX, float(lambda_nm))))
+
+
+def momentum_natural_units(
+    *,
+    energy_scale: float,
+    ell: int,
+    lambda_nm: float = 1550.0,
+) -> float:
+    """Dimensionless p / (ℏ k) = |ℓ| · energy_scale for this normalization."""
+    _ = lambda_nm  # retained for API symmetry with oam_kinetic_momentum
+    return abs(int(ell)) * float(energy_scale)
+
+
+def photon_state(
+    *,
+    ell: int,
+    lambda_nm: float,
+    energy_ev: float,
+) -> dict[str, float]:
+    """Derive coupled photon scalars from (ℓ, λ, E)."""
+    scale = energy_scale_from_ev(energy_ev=energy_ev, lambda_nm=lambda_nm)
+    p = oam_kinetic_momentum(energy_scale=scale, ell=ell, lambda_nm=lambda_nm)
+    return {
+        "ell": float(int(ell)),
+        "lambda_nm": float(lambda_nm),
+        "energy_ev": float(energy_ev),
+        "energy_scale": scale,
+        "momentum": p,
+        "momentum_natural": momentum_natural_units(
+            energy_scale=scale, ell=ell, lambda_nm=lambda_nm
+        ),
+        "frequency_thz": photon_frequency_thz(lambda_nm=lambda_nm),
+    }
 
 
 def is_momentum_conserved(

@@ -34,8 +34,13 @@ from oam_flux.emergence import (
 from oam_flux.lattice import TwistLattice
 from oam_flux.momentum import (
     DEFAULT_CONSERVATION_TOLERANCE,
+    clip_lambda_nm,
+    energy_scale_from_ev,
     is_momentum_conserved,
+    lambda_nm_from_ev,
     oam_kinetic_momentum,
+    photon_energy_ev,
+    photon_state,
 )
 from oam_flux.photon import OAMPacket
 from oam_flux.vqc_coupling import VQCCouplingState, run_vqc_coupling_step
@@ -64,6 +69,40 @@ def _fig_to_pil(fig: plt.Figure):
     plt.close(fig)
     buf.seek(0)
     return Image.open(buf)
+
+
+def format_photon_readout(ell: int, lambda_nm: float, energy_ev: float) -> str:
+    """Live coupled ℓ, λ, E readout with p and natural units."""
+    st = photon_state(ell=int(ell), lambda_nm=float(lambda_nm), energy_ev=float(energy_ev))
+    return (
+        f"**Active:** ℓ={int(ell)} · λ={st['lambda_nm']:.0f} nm · "
+        f"E={st['energy_ev']:.4f} eV · f={st['frequency_thz']:.2f} THz · "
+        f"**p₀={st['momentum']:.6f}** ×10⁻²⁷ kg·m/s · "
+        f"p/(ℏk)={st['momentum_natural']:.3f} · R_ref=0.137486"
+    )
+
+
+def couple_from_lambda(lambda_nm: float, ell: int, energy_ev: float, lock: str) -> tuple:
+    """λ change: update E when λ drives E."""
+    lam = clip_lambda_nm(lambda_nm)
+    e = float(energy_ev)
+    if lock == "λ drives E":
+        e = photon_energy_ev(lambda_nm=lam, energy_scale=1.0)
+    return e, format_photon_readout(int(ell), lam, e)
+
+
+def couple_from_energy(energy_ev: float, ell: int, lambda_nm: float, lock: str) -> tuple:
+    """E change: update λ when E drives λ."""
+    e = max(float(energy_ev), 0.62)
+    lam = clip_lambda_nm(lambda_nm)
+    if lock == "E drives λ":
+        lam = clip_lambda_nm(lambda_nm_from_ev(energy_ev=e, energy_scale=1.0))
+    return lam, format_photon_readout(int(ell), lam, e)
+
+
+def couple_from_ell(ell: int, lambda_nm: float, energy_ev: float) -> str:
+    """ℓ change: E and λ fixed; p updates via readout."""
+    return format_photon_readout(int(ell), clip_lambda_nm(lambda_nm), float(energy_ev))
 
 
 def _conservation_badge(history: list[dict]) -> str:
@@ -116,9 +155,15 @@ def run_vqc_coupling(
     l_max: int,
     turbulence: float,
     lambda_nm: float,
+    energy_ev: float,
 ) -> tuple:
     """VQC coupling demo → (timeseries_img, heatmap_img, kick_img, summary_md)."""
-    p0 = oam_kinetic_momentum(energy_scale=1.0, ell=ell, lambda_nm=lambda_nm)
+    st = photon_state(ell=int(ell), lambda_nm=float(lambda_nm), energy_ev=float(energy_ev))
+    e_scale = st["energy_scale"]
+    p0 = st["momentum"]
+    e0 = st["energy_ev"]
+    f0 = st["frequency_thz"]
+    p_nat = st["momentum_natural"]
     lattice = TwistLattice(nx=20, kappa=kappa)
     photonics = PhotonicsConfig(
         l_max=l_max,
@@ -135,6 +180,7 @@ def run_vqc_coupling(
             "kick_strength": kick_strength,
             "flywheel_sites": 4,
             "conserve_momentum": True,
+            "energy_scale": e_scale,
         },
     )
     steps = min(n_steps, state.propagation.n_z)
@@ -143,7 +189,10 @@ def run_vqc_coupling(
 
     ts_img = _fig_to_pil(_plot_momentum_history(
         state.history,
-        title=f"VQC coupling  ℓ={ell}  κ={kappa:.3f}  λ={lambda_nm:.0f} nm  p₀={p0:.5f}",
+        title=(
+            f"VQC coupling  ℓ={ell}  κ={kappa:.3f}  λ={lambda_nm:.0f} nm  "
+            f"E={e0:.3f} eV  p₀={p0:.5f}"
+        ),
     ))
 
     fig2, ax2 = plt.subplots(figsize=(8, 3))
@@ -178,7 +227,8 @@ def run_vqc_coupling(
     last = state.history[-1] if state.history else {}
     md = (
         f"### VQC coupling — ℓ={ell} · κ={kappa:.4f} · λ={lambda_nm:.0f} nm\n"
-        f"- **p₀** = {p0:.6f} ×10⁻²⁷ kg·m/s  (p = h|ℓ|/λ)\n"
+        f"- **E₀** = {e0:.4f} eV  (E = hc/λ) · **f** = {f0:.2f} THz\n"
+        f"- **p₀** = {p0:.6f} ×10⁻²⁷ kg·m/s  (p = h|ℓ|/λ) · **p/(ℏk)** = {p_nat:.3f}\n"
         f"- Final ⟨θ⟩ = **{state.lattice.mean_twist:.4f}**\n"
         f"- p_photon final = **{last.get('photon_momentum', 0):.4f}**\n"
         f"- p_lattice received = **{last.get('lattice_received', 0):.4f}**\n"
@@ -264,10 +314,19 @@ def run_emergence(
     return kappa_img, ell_img, "\n".join(lines)
 
 
-def run_analytic_coupling(ell: int, kappa: float, n_steps: int, lambda_nm: float) -> tuple:
-    """v0.1 analytic packet demo with explicit p ∝ ℓ/λ."""
-    photon = OAMPacket(ell=ell, lambda_nm=lambda_nm, energy_scale=1.0)
+def run_analytic_coupling(
+    ell: int,
+    kappa: float,
+    n_steps: int,
+    lambda_nm: float,
+    energy_ev: float,
+) -> tuple:
+    """v0.1 analytic packet demo with explicit p ∝ ℓ/λ and E = hc/λ."""
+    e_scale = energy_scale_from_ev(energy_ev=float(energy_ev), lambda_nm=float(lambda_nm))
+    photon = OAMPacket(ell=ell, lambda_nm=lambda_nm, energy_scale=e_scale)
     p0 = photon.momentum
+    e0 = photon.energy_ev
+    p_nat = photon_state(ell=ell, lambda_nm=lambda_nm, energy_ev=energy_ev)["momentum_natural"]
     lattice = TwistLattice(nx=20, kappa=kappa)
     state = CouplingState(lattice=lattice, photon=photon, kick_strength=0.08)
     for step in range(int(n_steps)):
@@ -275,13 +334,16 @@ def run_analytic_coupling(ell: int, kappa: float, n_steps: int, lambda_nm: float
 
     img = _fig_to_pil(_plot_momentum_history(
         state.history,
-        title=f"Analytic coupling  ℓ={ell}  κ={kappa:.3f}  λ={lambda_nm:.0f} nm  p₀={p0:.5f}",
+        title=(
+            f"Analytic coupling  ℓ={ell}  κ={kappa:.3f}  λ={lambda_nm:.0f} nm  "
+            f"E={e0:.3f} eV  p₀={p0:.5f}"
+        ),
     ))
     last = state.history[-1] if state.history else {}
     md = (
         f"### Analytic momentum ledger\n"
         f"- **ℓ** = {ell} · **λ** = {lambda_nm:.0f} nm · **κ** = {kappa:.4f}\n"
-        f"- **p₀** = {p0:.6f} ×10⁻²⁷ kg·m/s  (p = h|ℓ|/λ)\n"
+        f"- **E₀** = {e0:.4f} eV · **p₀** = {p0:.6f} ×10⁻²⁷ kg·m/s · **p/(ℏk)** = {p_nat:.3f}\n"
         f"- Final ⟨θ⟩ = **{state.lattice.mean_twist:.4f}**\n"
         f"- Δp_lattice = **{last.get('lattice_received', 0):.4f}**\n\n"
         f"{_conservation_badge(state.history)}\n"

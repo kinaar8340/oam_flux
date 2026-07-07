@@ -36,7 +36,8 @@ class VQCCouplingState:
         from .momentum import oam_kinetic_momentum
 
         lam = float(getattr(photonics_cfg, "lambda_nm", 1550.0))
-        p0 = oam_kinetic_momentum(energy_scale=1.0, ell=ell, lambda_nm=lam)
+        e_scale = float(coupling_cfg.get("energy_scale", 1.0))
+        p0 = oam_kinetic_momentum(energy_scale=e_scale, ell=ell, lambda_nm=lam)
         return cls(
             lattice=lattice,
             propagation=propagation,

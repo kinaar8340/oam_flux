@@ -12,6 +12,10 @@ from demo_core import (
     MYSTERY_URL,
     TOE_URL,
     VQC_URL,
+    couple_from_ell,
+    couple_from_energy,
+    couple_from_lambda,
+    format_photon_readout,
     get_build_label,
     run_analytic_coupling,
     run_eddington,
@@ -19,6 +23,7 @@ from demo_core import (
     run_helix_3d,
     run_vqc_coupling,
 )
+from oam_flux.momentum import photon_energy_ev
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +55,7 @@ Synthesis of [toe]({TOE_URL}) · [vqc_sims_public]({VQC_URL}) · [mystery]({MYST
 
 | Tab | Feature |
 |-----|---------|
-| **VQC Coupling** | Multi-ℓ propagation + flux kicks + momentum ledger |
+| **VQC Coupling** | Multi-ℓ propagation + coupled E, λ, p ledger |
 | **Emergence** | κ/ℓ sweeps (synced from VQC ℓ, κ) |
 | **Helix 3D** | Helix-within-helix + Hopf fiber animation |
 | **Eddington** | Flywheel cluster binding vs outward flux |
@@ -72,13 +77,21 @@ with gr.Blocks(title="OAM–Flux", theme=gr.themes.Soft(primary_hue="purple")) a
         with gr.Tab("VQC Coupling"):
             gr.Markdown(
                 "**VQC** — Multi-ℓ propagation → Hopf fiber flux kicks. "
-                "Momentum **p = h|ℓ|/λ** (×10⁻²⁷ kg·m/s)."
+                "**E = hc/λ** · **p = h|ℓ|/λ** (coupled ℓ, λ, E controls)."
             )
-            vqc_status = gr.Markdown("*Adjust ℓ and κ — Emergence tab follows automatically.*")
+            _e0 = photon_energy_ev(lambda_nm=1550.0, energy_scale=1.0)
+            vqc_status = gr.Markdown(format_photon_readout(3, 1550.0, _e0))
             with gr.Row():
                 vqc_ell = gr.Slider(-8, 8, value=3, step=1, label="ℓ (OAM quantum number)")
                 vqc_kappa = gr.Slider(0.75, 0.95, value=0.85, step=0.01, label="κ (gauge damping)")
                 vqc_lambda = gr.Slider(400, 2000, value=1550, step=10, label="λ (nm)")
+                vqc_energy = gr.Slider(0.62, 3.2, value=_e0, step=0.01, label="E (eV)")
+            vqc_couple = gr.Radio(
+                ["λ drives E", "E drives λ"],
+                value="λ drives E",
+                label="Couple",
+                info="λ drives E: fix wavelength, E=hc/λ. E drives λ: fix energy, λ=hc/E.",
+            )
             with gr.Row():
                 vqc_kick = gr.Slider(0.01, 0.2, value=0.08, step=0.01, label="kick strength")
                 vqc_steps = gr.Slider(20, 200, value=80, step=10, label="steps")
@@ -147,11 +160,12 @@ with gr.Blocks(title="OAM–Flux", theme=gr.themes.Soft(primary_hue="purple")) a
             ed_md = gr.Markdown()
 
         with gr.Tab("Analytic"):
-            gr.Markdown("v0.1 — analytic OAM packet; photon vs lattice momentum.")
+            gr.Markdown("v0.1 — analytic OAM packet; coupled E, λ, p vs lattice momentum.")
             with gr.Row():
                 an_ell = gr.Slider(-8, 8, value=3, step=1, label="ℓ")
                 an_kappa = gr.Slider(0.75, 0.95, value=0.85, step=0.01, label="κ")
                 an_lambda = gr.Slider(400, 2000, value=1550, step=10, label="λ (nm)")
+                an_energy = gr.Slider(0.62, 3.2, value=_e0, step=0.01, label="E (eV, synced)")
                 an_steps = gr.Slider(50, 500, value=150, step=50, label="steps")
             an_btn = gr.Button("Run analytic coupling", variant="secondary")
             an_img = gr.Image(label="Momentum + twist timeseries")
@@ -161,23 +175,50 @@ with gr.Blocks(title="OAM–Flux", theme=gr.themes.Soft(primary_hue="purple")) a
             gr.Markdown(ABOUT_MD)
 
     # --- Event handlers ---
-    def _vqc_preview(ell, kappa, lam):
-        from oam_flux.momentum import oam_kinetic_momentum
-        p = oam_kinetic_momentum(energy_scale=1.0, ell=int(ell), lambda_nm=lam)
-        return (
-            f"**Active:** ℓ={int(ell)} · κ={kappa:.3f} · λ={lam:.0f} nm · "
-            f"**p₀ ≈ {p:.6f}** ×10⁻²⁷ kg·m/s · R_ref=0.137486"
-        )
-
     def _sync_from_vqc(ell, kappa, lmax):
         badge = f"**Synced:** ℓ={int(ell)} · κ={kappa:.3f} · L_max={int(lmax)} (from VQC)"
         return int(ell), float(kappa), int(lmax), badge
 
-    def _sync_vqc_to_helix_ed(ell, lam):
-        return int(ell), int(ell), float(lam)
+    def _sync_vqc_to_helix_ed(ell, lam, energy):
+        return int(ell), int(ell), float(lam), float(energy)
 
-    for ctrl in (vqc_ell, vqc_kappa, vqc_lambda):
-        ctrl.change(_vqc_preview, [vqc_ell, vqc_kappa, vqc_lambda], [vqc_status])
+    vqc_lambda.change(
+        couple_from_lambda,
+        [vqc_lambda, vqc_ell, vqc_energy, vqc_couple],
+        [vqc_energy, vqc_status],
+    ).then(
+        _sync_vqc_to_helix_ed,
+        [vqc_ell, vqc_lambda, vqc_energy],
+        [hx_ell, ed_ell, ed_lambda, an_energy],
+    ).then(
+        lambda lam: lam,
+        [vqc_lambda],
+        [an_lambda],
+    )
+
+    vqc_energy.change(
+        couple_from_energy,
+        [vqc_energy, vqc_ell, vqc_lambda, vqc_couple],
+        [vqc_lambda, vqc_status],
+    ).then(
+        _sync_vqc_to_helix_ed,
+        [vqc_ell, vqc_lambda, vqc_energy],
+        [hx_ell, ed_ell, ed_lambda, an_energy],
+    ).then(
+        lambda lam: lam,
+        [vqc_lambda],
+        [an_lambda],
+    )
+
+    vqc_ell.change(
+        couple_from_ell,
+        [vqc_ell, vqc_lambda, vqc_energy],
+        [vqc_status],
+    ).then(
+        lambda ell: int(ell),
+        [vqc_ell],
+        [hx_ell, ed_ell, em_ell],
+    )
 
     for ctrl in (vqc_ell, vqc_kappa, vqc_lmax):
         ctrl.change(
@@ -186,16 +227,6 @@ with gr.Blocks(title="OAM–Flux", theme=gr.themes.Soft(primary_hue="purple")) a
             [em_ell, em_kappa, em_lmax, em_sync_badge],
         )
 
-    vqc_ell.change(
-        _sync_vqc_to_helix_ed,
-        [vqc_ell, vqc_lambda],
-        [hx_ell, ed_ell, ed_lambda],
-    )
-    vqc_lambda.change(
-        lambda lam: lam,
-        [vqc_lambda],
-        [ed_lambda, an_lambda],
-    )
     vqc_kappa.change(
         lambda k: k,
         [vqc_kappa],
@@ -204,7 +235,7 @@ with gr.Blocks(title="OAM–Flux", theme=gr.themes.Soft(primary_hue="purple")) a
 
     vqc_btn.click(
         run_vqc_coupling,
-        [vqc_ell, vqc_kappa, vqc_kick, vqc_steps, vqc_lmax, vqc_turb, vqc_lambda],
+        [vqc_ell, vqc_kappa, vqc_kick, vqc_steps, vqc_lmax, vqc_turb, vqc_lambda, vqc_energy],
         [vqc_ts, vqc_heat, vqc_kick_img, vqc_md],
     )
     em_btn.click(
@@ -224,7 +255,7 @@ with gr.Blocks(title="OAM–Flux", theme=gr.themes.Soft(primary_hue="purple")) a
     )
     an_btn.click(
         run_analytic_coupling,
-        [an_ell, an_kappa, an_steps, an_lambda],
+        [an_ell, an_kappa, an_steps, an_lambda, an_energy],
         [an_img, an_md],
     )
 

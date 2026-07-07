@@ -32,6 +32,12 @@ class OAMPacket:
             lambda_nm=self.lambda_nm,
         )
 
+    @property
+    def energy_ev(self) -> float:
+        """E = hc/λ in eV (scaled by packet ``energy_scale``)."""
+        from .momentum import photon_energy_ev
+        return photon_energy_ev(lambda_nm=self.lambda_nm, energy_scale=self.energy_scale)
+
     def transfer_momentum(self, requested: float) -> float:
         """Transfer up to `requested` momentum to lattice; return actual Δp."""
         actual = min(max(requested, 0.0), self.momentum)
