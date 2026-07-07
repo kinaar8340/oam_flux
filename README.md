@@ -1,6 +1,7 @@
 # OAM–Flux
 
 [![Repository](https://img.shields.io/badge/GitHub-oam__flux-blue)](https://github.com/kinaar8340/oam_flux)
+[![HF Space](https://img.shields.io/badge/🤗%20Hugging%20Face-live%20demo-yellow)](https://huggingface.co/spaces/kinaar111/oam_flux)
 
 **Orbital Angular Momentum coupled to gauged Hopf lattice flux flywheels.**
 
@@ -11,6 +12,25 @@ Synthesis layer unifying three existing simulation stacks:
 | [toe](https://github.com/kinaar8340/toe) | Gauged Hopf lattice, twist PDE, flux flywheels, κ / W_g locks |
 | [vqc_sims_public](https://github.com/kinaar8340/vqc_sims_public) | Helical OAM propagation, LG modes, OAM-flux qubit dynamics |
 | [mystery](https://github.com/kinaar8340/mystery) | Emergent probes: residual R, golden angle, e⁻² survival @ λt=2 |
+
+## Try the live demo (zero install)
+
+**[🤗 Hugging Face Space — OAM–Flux](https://huggingface.co/spaces/kinaar111/oam_flux)**
+
+| Tab | What it runs |
+|-----|----------------|
+| **VQC Coupling** | Multi-ℓ propagation heatmap + flux kick on lattice fibers |
+| **Emergence** | κ/ℓ survival sweeps vs R, e⁻², golden-angle @ λt=2 |
+| **Analytic** | Fast v0.1 OAM packet baseline |
+
+Deploy / update Space:
+
+```bash
+bash scripts/sync_hf_space.sh
+bash scripts/deploy_hf_space.sh
+```
+
+---
 
 ## Concept
 
@@ -67,7 +87,7 @@ src/oam_flux/
 1. **v0.1** — analytic OAM packet + flywheel kicks + PDE relaxation ✅
 2. **v0.2** — VQC vectorized multi-ℓ propagation; Hopf fiber flux deposition ✅
 3. **v0.3** — mystery emergence probes: κ/ℓ sweeps, R / e⁻² / golden analog matching ✅
-4. **v0.4** — Streamlit dashboard (lattice + helical beam overlay)
+4. **v0.4** — Hugging Face Gradio Space ✅
 
 ## Related repos
 

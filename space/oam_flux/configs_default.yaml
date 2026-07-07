@@ -1,0 +1,50 @@
+# Shared constants across toe / mystery / vqc stacks
+constants:
+  W_g: 111.408          # 350/π — Hopf winding lock
+  kappa_doc: 0.85       # theory anchor (θ_crit, B(κ))
+  kappa_sim: 0.89       # production optimum @ λt=2
+  braiding_phase: 0.814
+  golden_angle_deg: 137.507764
+
+lattice:
+  nx: 24
+  nt: 2000
+  dt: 0.001
+  D: 0.05
+  delta_omega: 0.002
+  theta_crit: 5.8
+  kappa: 0.85           # PDE gauge damping (use kappa_doc by default)
+
+photon:
+  ell: 3                # OAM quantum number ℓ
+  lambda_nm: 1550.0
+  w0: 1.0
+  z_steps: 200
+  z_end: 5.0
+  energy_scale: 1.0     # normalized packet energy → momentum kick scale
+
+vqc:
+  l_max: 8              # OAM horizon for coupling demos (vqc_sims uses up to 199)
+  nr: 512               # radial grid resolution
+  w0: 1.0
+  z_start: 0.0
+  z_end: 5.0
+  n_z: 200
+  turbulence: 0.0
+  chirp: 0.0
+  qec_suppression: 1    # 1 = raw physics; 16 = VQC patent QEC attenuation
+
+coupling:
+  flywheel_sites: 4     # discrete resonator indices on lattice diagonal
+  kick_strength: 0.08   # Δθ per unit photon flux at encounter
+  conserve_momentum: true
+
+emergence:
+  lambda_t: 2.0         # normalize dynamics to λt = 2 (mystery survival convention)
+  pump_fraction: 0.5  # fraction of λt for VQC pump; remainder = pure PDE relaxation
+  kappa_min: 0.80
+  kappa_max: 0.90
+  kappa_sweep_points: 21
+  ell_sweep_l_max: 6
+  n_z: 100              # shorter propagation for probe sweeps
+  nr: 256
