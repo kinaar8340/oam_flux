@@ -23,10 +23,13 @@ class TwistLattice:
     delta_omega: float = 0.002
     theta_crit: float = 5.8
     theta: np.ndarray = field(init=False)
+    theta_initial: np.ndarray = field(init=False)
     momentum_ledger: float = 0.0
+    recovery_rate: float = 0.04
 
     def __post_init__(self) -> None:
         self.theta = helical_seed(self.nx)
+        self.theta_initial = self.theta.copy()
 
     @property
     def mean_twist(self) -> float:
@@ -59,7 +62,12 @@ class TwistLattice:
         self.theta = np.clip(self.theta + kick, 0.01, 2 * np.pi - 0.01)
         self.momentum_ledger -= photon_momentum
 
-    def relax_step(self, *, external_torque: np.ndarray | None = None) -> float:
+    def relax_step(
+        self,
+        *,
+        external_torque: np.ndarray | None = None,
+        pump_active: bool = True,
+    ) -> float:
         """Single PDE step: ∂θ/∂t = DΔθ + cot + Δω − κ⟨θ⟩ + burst + external."""
         lap = self._laplacian()
         cot = self._cot_term()
@@ -73,7 +81,17 @@ class TwistLattice:
         if external_torque is not None:
             rhs = rhs + external_torque
         self.theta = np.clip(self.theta + self.dt * rhs, 0.01, 2 * np.pi - 0.01)
+        if not pump_active:
+            self.theta = np.clip(
+                self.theta + self.recovery_rate * (self.theta_initial - self.theta),
+                0.01,
+                2 * np.pi - 0.01,
+            )
         return self.mean_twist
+
+    def twist_load_vs_initial(self) -> float:
+        """Mean |θ − θ₀| — drops during lattice recovery."""
+        return float(np.mean(np.abs(self.theta - self.theta_initial)))
 
     def flywheel_indices(self, n_sites: int) -> list[tuple[int, int, int]]:
         """Place resonators on lattice diagonal (flux-flywheel anchors)."""

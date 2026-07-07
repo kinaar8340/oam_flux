@@ -8,6 +8,18 @@ from .lattice import TwistLattice
 
 DEFAULT_BACK_REACTION_STRENGTH = 0.35
 MIN_COUPLING_FACTOR = 0.15
+PUMP_OFF_FRACTION = 0.01
+
+
+def photon_pump_active(
+    reservoir: float,
+    initial: float,
+    *,
+    fraction: float = PUMP_OFF_FRACTION,
+) -> bool:
+    """True while photon reservoir exceeds ``fraction`` of initial momentum."""
+    ref = max(abs(float(initial)), 1e-12)
+    return float(reservoir) > ref * float(fraction)
 
 
 def lattice_back_reaction(

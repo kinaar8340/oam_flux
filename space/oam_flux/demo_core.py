@@ -101,6 +101,22 @@ def couple_from_energy(energy_ev: float, ell: int, lambda_nm: float, lock: str) 
     return lam, format_photon_readout(int(ell), lam, e)
 
 
+def _recovery_summary_line(history: list[dict]) -> str:
+    if not history or "recovery_steps" not in history[-1]:
+        return ""
+    last = history[-1]
+    rec = int(last.get("recovery_steps", 0))
+    if rec <= 0:
+        return "- **Recovery** = none (pump active throughout)\n"
+    etas = [h.get("back_reaction_coupling", 1.0) for h in history]
+    eta_min = min(etas) if etas else 1.0
+    eta_final = history[-1].get("back_reaction_coupling", 1.0)
+    return (
+        f"- **Recovery** = {rec} steps after pump off · "
+        f"η: {eta_min:.3f} → **{eta_final:.3f}**\n"
+    )
+
+
 def _kick_scale_line(kick_strength: float, energy_scale: float) -> str:
     k_eff = effective_kick_strength(kick_strength, energy_scale)
     return (
@@ -135,6 +151,12 @@ def _plot_momentum_history(history: list[dict], *, title: str, p0_label: str = "
     fig, axes = plt.subplots(2, 1, figsize=(8, 6), sharex=True, gridspec_kw={"height_ratios": [1, 1.2]})
 
     axes[0].plot(steps, [h["mean_twist"] for h in history], color="#2a9d8f", lw=1.5, label="⟨θ⟩")
+    if history and "recovery_active" in history[0]:
+        rec_steps = [h["step"] for h in history if h.get("recovery_active", 0) > 0.5]
+        if rec_steps:
+            axes[0].axvspan(
+                rec_steps[0], steps[-1], color="#c9a227", alpha=0.08, label="recovery",
+            )
     if history and "back_reaction_coupling" in history[0]:
         ax_br = axes[0].twinx()
         ax_br.plot(
@@ -258,6 +280,7 @@ def run_vqc_coupling(
         f"{_kick_scale_line(kick_strength, e_scale)}"
         f"- **Back-reaction** η_final = **{last.get('back_reaction_coupling', 1.0):.3f}** · "
         f"phase slip = **{last.get('cumulative_phase_slip', 0.0):.4f}**\n"
+        f"{_recovery_summary_line(state.history)}"
         f"- Final ⟨θ⟩ = **{state.lattice.mean_twist:.4f}**\n"
         f"- p_photon final = **{last.get('photon_momentum', 0):.4f}**\n"
         f"- p_lattice received = **{last.get('lattice_received', 0):.4f}**\n"
@@ -377,6 +400,7 @@ def run_analytic_coupling(
         f"- *Analytic kicks scale via p(E); κ_eff shown for comparison.*\n"
         f"- **Back-reaction** η_final = **{last.get('back_reaction_coupling', 1.0):.3f}** · "
         f"phase slip = **{last.get('cumulative_phase_slip', 0.0):.4f}**\n"
+        f"{_recovery_summary_line(state.history)}"
         f"- Final ⟨θ⟩ = **{state.lattice.mean_twist:.4f}**\n"
         f"- Δp_lattice = **{last.get('lattice_received', 0):.4f}**\n\n"
         f"{_conservation_badge(state.history)}\n"
@@ -529,6 +553,7 @@ def run_eddington(
         f"**E** = {st['energy_ev']:.4f} eV\n"
         f"{_kick_scale_line(kick_strength, result.energy_scale)}"
         f"- **Back-reaction** phase slip = **{result.cumulative_phase_slip:.4f}**\n"
+        f"{_recovery_summary_line(result.history)}"
         f"- Flywheels = **{n_flywheels}** · unstable sites = **{unstable}**\n"
         f"- Total outward flux = **{result.total_outward_flux:.4f}**\n"
         f"{wind_note}"

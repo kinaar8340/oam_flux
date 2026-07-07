@@ -36,6 +36,7 @@ class EddingtonResult:
     limit_exceeded: bool = False
     total_outward_flux: float = 0.0
     cumulative_phase_slip: float = 0.0
+    recovery_steps: int = 0
     wind_vector: np.ndarray = field(default_factory=lambda: np.zeros(3))
 
     def to_dict(self) -> dict:
@@ -137,34 +138,46 @@ def run_eddington_probe(
 
     steps = min(n_steps, state.propagation.n_z)
 
-    from .back_reaction import apply_phase_slip, lattice_back_reaction
+    from .back_reaction import apply_phase_slip, lattice_back_reaction, photon_pump_active
 
     for step in range(steps):
         z_idx = min(state.z_index, state.propagation.n_z - 1)
         from .flux_deposit import deposit_on_flywheels
 
-        br = lattice_back_reaction(lattice, ell=ell)
-        k_step = k_eff * br["coupling_factor"]
-        kick, deposited = deposit_on_flywheels(
-            lattice,
-            state.propagation,
-            ell=ell,
-            z_index=z_idx,
-            kick_strength=k_step,
-            flywheel_sites=n_flywheels,
+        pump_active = photon_pump_active(
+            state.photon_reservoir, state.initial_total_momentum,
         )
+        slip = 0.0
+        delta_p = 0.0
+        import numpy as np
+        kick = np.zeros_like(lattice.theta)
 
-        delta_p = min(deposited, state.photon_reservoir)
-        state.photon_reservoir = max(0.0, state.photon_reservoir - delta_p)
-        lattice.apply_kick(kick, photon_momentum=delta_p)
-        state.photon_reservoir, slip = apply_phase_slip(
-            state.photon_reservoir,
-            phase_slip_fraction=br["phase_slip_fraction"],
-        )
-        if slip > 0:
-            lattice.momentum_ledger -= slip
-            result.cumulative_phase_slip += slip
-        lattice.relax_step()
+        if pump_active:
+            br_dep = lattice_back_reaction(lattice, ell=ell)
+            k_step = k_eff * br_dep["coupling_factor"]
+            kick, deposited = deposit_on_flywheels(
+                lattice,
+                state.propagation,
+                ell=ell,
+                z_index=z_idx,
+                kick_strength=k_step,
+                flywheel_sites=n_flywheels,
+            )
+            delta_p = min(deposited, state.photon_reservoir)
+            state.photon_reservoir = max(0.0, state.photon_reservoir - delta_p)
+            lattice.apply_kick(kick, photon_momentum=delta_p)
+            state.photon_reservoir, slip = apply_phase_slip(
+                state.photon_reservoir,
+                phase_slip_fraction=br_dep["phase_slip_fraction"],
+            )
+            if slip > 0:
+                lattice.momentum_ledger -= slip
+                result.cumulative_phase_slip += slip
+        else:
+            result.recovery_steps += 1
+
+        lattice.relax_step(pump_active=pump_active)
+        br = lattice_back_reaction(lattice, ell=ell)
 
         step_outward = 0.0
         step_wind = np.zeros(3)
@@ -210,8 +223,11 @@ def run_eddington_probe(
                 "wind_y": float(w[1]),
                 "wind_z": float(w[2]),
                 "unstable_count": float(sum(1 for s in sites if s.unstable)),
+                "pump_active": 1.0 if pump_active else 0.0,
+                "recovery_active": 0.0 if pump_active else 1.0,
                 "back_reaction_coupling": br["coupling_factor"],
                 "back_reaction_slip": slip,
+                "recovery_steps": float(result.recovery_steps),
             }
         )
 
