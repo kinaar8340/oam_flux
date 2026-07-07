@@ -24,7 +24,18 @@ class VQCCouplingState:
     initial_total_momentum: float = 0.0
     cumulative_phase_slip: float = 0.0
     recovery_steps: int = 0
+    pulses_fired: int = 0
+    total_injected: float = 0.0
+    current_pulse: int = 0
+    pulse_phase: str = "single"
+    pulse_train_mode: bool = False
     history: list[dict[str, float]] = field(default_factory=list)
+
+    def refill_reservoir(self) -> None:
+        """Inject a fresh photon packet for the next pulse."""
+        self.photon_reservoir = self.initial_total_momentum
+        self.pulses_fired += 1
+        self.total_injected += self.initial_total_momentum
 
     @classmethod
     def from_config(
@@ -136,6 +147,10 @@ def run_vqc_coupling_step(state: VQCCouplingState, step: int) -> None:
             "back_reaction_slip": slip if pump_active and state.conserve_momentum else 0.0,
             "back_reaction_ell_shift": br["effective_ell_shift"],
             "cumulative_phase_slip": state.cumulative_phase_slip,
+            "pulse_index": float(state.current_pulse),
+            "pulse_phase_pump": 1.0 if state.pulse_phase == "pump" else 0.0,
+            "pulses_fired": float(state.pulses_fired),
+            "total_injected": state.total_injected,
         }
     )
 

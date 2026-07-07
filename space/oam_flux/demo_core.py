@@ -101,6 +101,37 @@ def couple_from_energy(energy_ev: float, ell: int, lambda_nm: float, lock: str) 
     return lam, format_photon_readout(int(ell), lam, e)
 
 
+def _annotate_pulse_train(axes, history: list[dict]) -> None:
+    """Mark pump onsets and recovery gaps on the timeseries."""
+    if not history or "pulse_index" not in history[0]:
+        return
+    seen: set[int] = set()
+    for h in history:
+        pid = int(h.get("pulse_index", 0))
+        if pid not in seen and h.get("pulse_phase_pump", 0) > 0.5:
+            axes[0].axvline(h["step"], color="#457b9d", ls=":", lw=0.9, alpha=0.55)
+            seen.add(pid)
+    rec_start: float | None = None
+    for h in history:
+        if h.get("recovery_active", 0) > 0.5:
+            if rec_start is None:
+                rec_start = h["step"]
+        elif rec_start is not None:
+            axes[0].axvspan(rec_start, h["step"], color="#c9a227", alpha=0.08)
+            rec_start = None
+    if rec_start is not None:
+        axes[0].axvspan(rec_start, history[-1]["step"], color="#c9a227", alpha=0.08)
+
+
+def _pulse_train_summary_line(state) -> str:
+    if not getattr(state, "pulse_train_mode", False) or state.pulses_fired <= 1:
+        return ""
+    return (
+        f"- **Pulse train** = {state.pulses_fired} pulses · "
+        f"total injected = **{state.total_injected:.4f}** (p₀ each)\n"
+    )
+
+
 def _recovery_summary_line(history: list[dict]) -> str:
     if not history or "recovery_steps" not in history[-1]:
         return ""
@@ -151,7 +182,9 @@ def _plot_momentum_history(history: list[dict], *, title: str, p0_label: str = "
     fig, axes = plt.subplots(2, 1, figsize=(8, 6), sharex=True, gridspec_kw={"height_ratios": [1, 1.2]})
 
     axes[0].plot(steps, [h["mean_twist"] for h in history], color="#2a9d8f", lw=1.5, label="⟨θ⟩")
-    if history and "recovery_active" in history[0]:
+    if history and "pulse_index" in history[0]:
+        _annotate_pulse_train(axes, history)
+    elif history and "recovery_active" in history[0]:
         rec_steps = [h["step"] for h in history if h.get("recovery_active", 0) > 0.5]
         if rec_steps:
             axes[0].axvspan(
@@ -201,18 +234,35 @@ def run_vqc_coupling(
     turbulence: float,
     lambda_nm: float,
     energy_ev: float,
+    pulse_train: bool = False,
+    n_pulses: int = 3,
+    pump_steps: int = 30,
+    gap_steps: int = 20,
 ) -> tuple:
     """VQC coupling demo → (timeseries_img, heatmap_img, kick_img, summary_md)."""
+    from oam_flux.pulse_train import PulseTrainConfig, run_vqc_pulse_train
+
     st = photon_state(ell=int(ell), lambda_nm=float(lambda_nm), energy_ev=float(energy_ev))
     e_scale = st["energy_scale"]
     p0 = st["momentum"]
     e0 = st["energy_ev"]
     f0 = st["frequency_thz"]
     p_nat = st["momentum_natural"]
+
+    if pulse_train:
+        pcfg = PulseTrainConfig(
+            n_pulses=int(n_pulses),
+            pump_steps=int(pump_steps),
+            gap_steps=int(gap_steps),
+        )
+        sim_steps = pcfg.total_steps
+    else:
+        sim_steps = int(n_steps)
+
     lattice = TwistLattice(nx=20, kappa=kappa)
     photonics = PhotonicsConfig(
         l_max=l_max,
-        n_z=min(n_steps, 150),
+        n_z=min(sim_steps, 200),
         nr=256,
         turbulence=turbulence,
         lambda_nm=lambda_nm,
@@ -228,14 +278,22 @@ def run_vqc_coupling(
             "energy_scale": e_scale,
         },
     )
-    steps = min(n_steps, state.propagation.n_z)
-    for step in range(steps):
-        run_vqc_coupling_step(state, step)
+    if pulse_train:
+        steps = run_vqc_pulse_train(state, pcfg)
+    else:
+        steps = min(sim_steps, state.propagation.n_z)
+        for step in range(steps):
+            run_vqc_coupling_step(state, step)
 
+    mode = (
+        f"pulse×{int(n_pulses)} ({int(pump_steps)}+{int(gap_steps)})"
+        if pulse_train
+        else "continuous"
+    )
     ts_img = _fig_to_pil(_plot_momentum_history(
         state.history,
         title=(
-            f"VQC coupling  ℓ={ell}  κ={kappa:.3f}  λ={lambda_nm:.0f} nm  "
+            f"VQC {mode}  ℓ={ell}  κ={kappa:.3f}  λ={lambda_nm:.0f} nm  "
             f"E={e0:.3f} eV  p₀={p0:.5f}"
         ),
     ))
@@ -278,6 +336,7 @@ def run_vqc_coupling(
         f"- **E₀** = {e0:.4f} eV  (E = hc/λ) · **f** = {f0:.2f} THz\n"
         f"- **p₀** = {p0:.6f} ×10⁻²⁷ kg·m/s  (p = h|ℓ|/λ) · **p/(ℏk)** = {p_nat:.3f}\n"
         f"{_kick_scale_line(kick_strength, e_scale)}"
+        f"{_pulse_train_summary_line(state)}"
         f"- **Back-reaction** η_final = **{last.get('back_reaction_coupling', 1.0):.3f}** · "
         f"phase slip = **{last.get('cumulative_phase_slip', 0.0):.4f}**\n"
         f"{_recovery_summary_line(state.history)}"

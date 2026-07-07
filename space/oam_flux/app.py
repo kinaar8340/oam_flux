@@ -94,9 +94,14 @@ with gr.Blocks(title="OAM–Flux", theme=gr.themes.Soft(primary_hue="purple")) a
             )
             with gr.Row():
                 vqc_kick = gr.Slider(0.01, 0.2, value=0.08, step=0.01, label="kick strength")
-                vqc_steps = gr.Slider(20, 200, value=80, step=10, label="steps")
+                vqc_steps = gr.Slider(20, 200, value=80, step=10, label="steps (continuous)")
                 vqc_lmax = gr.Slider(3, 12, value=6, step=1, label="L_max")
                 vqc_turb = gr.Slider(0.0, 0.5, value=0.0, step=0.05, label="turbulence")
+            with gr.Row():
+                vqc_pulse = gr.Checkbox(value=False, label="Pulse train")
+                vqc_n_pulses = gr.Slider(2, 5, value=3, step=1, label="pulses")
+                vqc_pump_steps = gr.Slider(10, 60, value=30, step=5, label="pump steps")
+                vqc_gap_steps = gr.Slider(10, 60, value=20, step=5, label="recovery gap")
             vqc_btn = gr.Button("Run VQC coupling", variant="primary")
             with gr.Row():
                 vqc_ts = gr.Image(label="Timeseries")
@@ -236,7 +241,10 @@ with gr.Blocks(title="OAM–Flux", theme=gr.themes.Soft(primary_hue="purple")) a
 
     vqc_btn.click(
         run_vqc_coupling,
-        [vqc_ell, vqc_kappa, vqc_kick, vqc_steps, vqc_lmax, vqc_turb, vqc_lambda, vqc_energy],
+        [
+            vqc_ell, vqc_kappa, vqc_kick, vqc_steps, vqc_lmax, vqc_turb,
+            vqc_lambda, vqc_energy, vqc_pulse, vqc_n_pulses, vqc_pump_steps, vqc_gap_steps,
+        ],
         [vqc_ts, vqc_heat, vqc_kick_img, vqc_md],
     )
     em_btn.click(
