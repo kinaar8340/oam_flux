@@ -23,6 +23,17 @@ photon:
   z_end: 5.0
   energy_scale: 1.0     # normalized packet energy → momentum kick scale
 
+vqc:
+  l_max: 8              # OAM horizon for coupling demos (vqc_sims uses up to 199)
+  nr: 512               # radial grid resolution
+  w0: 1.0
+  z_start: 0.0
+  z_end: 5.0
+  n_z: 200
+  turbulence: 0.0
+  chirp: 0.0
+  qec_suppression: 1    # 1 = raw physics; 16 = VQC patent QEC attenuation
+
 coupling:
   flywheel_sites: 4     # discrete resonator indices on lattice diagonal
   kick_strength: 0.08   # Δθ per unit photon flux at encounter

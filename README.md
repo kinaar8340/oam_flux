@@ -1,5 +1,7 @@
 # OAM–Flux
 
+[![Repository](https://img.shields.io/badge/GitHub-oam__flux-blue)](https://github.com/kinaar8340/oam_flux)
+
 **Orbital Angular Momentum coupled to gauged Hopf lattice flux flywheels.**
 
 Synthesis layer unifying three existing simulation stacks:
@@ -21,23 +23,29 @@ cd ~/Projects/oam_flux
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/pip install -e .
 
-# First integration probe
+# v0.1 — analytic OAM packet coupling
 .venv/bin/python scripts/run_coupling_demo.py
+
+# v0.2 — VQC vectorized propagation + fiber flux deposition
+.venv/bin/python scripts/run_vqc_coupling_demo.py
 
 # Tests
 .venv/bin/pytest -q
 ```
 
-Outputs land in `outputs/coupling_demo/`.
+Outputs: `outputs/coupling_demo/` (v0.1) · `outputs/vqc_coupling_demo/` (v0.2).
 
 ## Module map
 
 ```
 src/oam_flux/
-├── constants.py   # W_g, κ_doc, κ_sim, κ*, residual R
-├── lattice.py     # Twist PDE + helical IC (from toe pde_relaxation)
-├── photon.py      # LG OAM packets (from vqc photonics)
-└── coupling.py    # Momentum ledger + flywheel kicks
+├── constants.py     # W_g, κ_doc, κ_sim, κ*, residual R
+├── lattice.py       # Twist PDE + helical IC (from toe pde_relaxation)
+├── photon.py        # Analytic LG OAM packets (v0.1)
+├── coupling.py      # Analytic momentum ledger + flywheel kicks (v0.1)
+├── vqc_photonics.py # VQC vectorized multi-ℓ propagation (v0.2)
+├── flux_deposit.py  # Hopf fiber coords + flux → twist kick
+└── vqc_coupling.py  # z-resolved VQC ↔ lattice coupling (v0.2)
 ```
 
 ## Shared constants (`configs/default.yaml`)
@@ -52,8 +60,8 @@ src/oam_flux/
 
 ## Roadmap
 
-1. **v0.1** — coupled kick + PDE relaxation (this repo)
-2. **v0.2** — import `vqc_sims_public` vectorized propagation; deposit flux on lattice fibers
+1. **v0.1** — analytic OAM packet + flywheel kicks + PDE relaxation ✅
+2. **v0.2** — VQC vectorized multi-ℓ propagation; Hopf fiber flux deposition ✅
 3. **v0.3** — mystery probes: golden-angle OAM quantization, κ* residual alignment
 4. **v0.4** — Streamlit dashboard (lattice + helical beam overlay)
 
