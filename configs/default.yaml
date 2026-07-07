@@ -1,0 +1,29 @@
+# Shared constants across toe / mystery / vqc stacks
+constants:
+  W_g: 111.408          # 350/π — Hopf winding lock
+  kappa_doc: 0.85       # theory anchor (θ_crit, B(κ))
+  kappa_sim: 0.89       # production optimum @ λt=2
+  braiding_phase: 0.814
+  golden_angle_deg: 137.507764
+
+lattice:
+  nx: 24
+  nt: 2000
+  dt: 0.001
+  D: 0.05
+  delta_omega: 0.002
+  theta_crit: 5.8
+  kappa: 0.85           # PDE gauge damping (use kappa_doc by default)
+
+photon:
+  ell: 3                # OAM quantum number ℓ
+  lambda_nm: 1550.0
+  w0: 1.0
+  z_steps: 200
+  z_end: 5.0
+  energy_scale: 1.0     # normalized packet energy → momentum kick scale
+
+coupling:
+  flywheel_sites: 4     # discrete resonator indices on lattice diagonal
+  kick_strength: 0.08   # Δθ per unit photon flux at encounter
+  conserve_momentum: true
