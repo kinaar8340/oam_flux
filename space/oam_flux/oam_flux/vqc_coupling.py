@@ -22,6 +22,7 @@ class VQCCouplingState:
     lambda_nm: float = 1550.0
     photon_reservoir: float = 0.0
     initial_total_momentum: float = 0.0
+    cumulative_phase_slip: float = 0.0
     history: list[dict[str, float]] = field(default_factory=list)
 
     @classmethod
@@ -81,10 +82,15 @@ class VQCCouplingState:
 
 def run_vqc_coupling_step(state: VQCCouplingState, step: int) -> None:
     """Advance one step: deposit VQC flux at current z, relax lattice, step z."""
+    from .back_reaction import apply_phase_slip, lattice_back_reaction
     from .momentum import effective_kick_strength
 
     z_idx = min(state.z_index, state.propagation.n_z - 1)
-    k_eff = effective_kick_strength(state.kick_strength, state.energy_scale)
+    br = lattice_back_reaction(state.lattice, ell=state.ell)
+    k_eff = (
+        effective_kick_strength(state.kick_strength, state.energy_scale)
+        * br["coupling_factor"]
+    )
     kick, deposited = deposit_on_flywheels(
         state.lattice,
         state.propagation,
@@ -94,16 +100,32 @@ def run_vqc_coupling_step(state: VQCCouplingState, step: int) -> None:
         flywheel_sites=state.flywheel_sites,
     )
 
+    slip = 0.0
     if state.conserve_momentum:
         delta_p = min(deposited, state.photon_reservoir)
         state.photon_reservoir = max(0.0, state.photon_reservoir - delta_p)
         state.lattice.apply_kick(kick, photon_momentum=delta_p)
+        state.photon_reservoir, slip = apply_phase_slip(
+            state.photon_reservoir,
+            phase_slip_fraction=br["phase_slip_fraction"],
+        )
+        if slip > 0:
+            state.lattice.momentum_ledger -= slip
+            state.cumulative_phase_slip += slip
     else:
         import numpy as np
         state.lattice.theta = np.clip(state.lattice.theta + kick, 0.01, 2 * np.pi - 0.01)
 
     state.lattice.relax_step()
     state.record(step)
+    state.history[-1].update(
+        {
+            "back_reaction_coupling": br["coupling_factor"],
+            "back_reaction_slip": slip if state.conserve_momentum else 0.0,
+            "back_reaction_ell_shift": br["effective_ell_shift"],
+            "cumulative_phase_slip": state.cumulative_phase_slip,
+        }
+    )
 
     if state.z_index < state.propagation.n_z - 1:
         state.z_index += 1

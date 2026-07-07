@@ -35,6 +35,7 @@ class EddingtonResult:
     history: list[dict[str, float]] = field(default_factory=list)
     limit_exceeded: bool = False
     total_outward_flux: float = 0.0
+    cumulative_phase_slip: float = 0.0
     wind_vector: np.ndarray = field(default_factory=lambda: np.zeros(3))
 
     def to_dict(self) -> dict:
@@ -136,22 +137,33 @@ def run_eddington_probe(
 
     steps = min(n_steps, state.propagation.n_z)
 
+    from .back_reaction import apply_phase_slip, lattice_back_reaction
+
     for step in range(steps):
         z_idx = min(state.z_index, state.propagation.n_z - 1)
         from .flux_deposit import deposit_on_flywheels
 
+        br = lattice_back_reaction(lattice, ell=ell)
+        k_step = k_eff * br["coupling_factor"]
         kick, deposited = deposit_on_flywheels(
             lattice,
             state.propagation,
             ell=ell,
             z_index=z_idx,
-            kick_strength=k_eff,
+            kick_strength=k_step,
             flywheel_sites=n_flywheels,
         )
 
         delta_p = min(deposited, state.photon_reservoir)
         state.photon_reservoir = max(0.0, state.photon_reservoir - delta_p)
         lattice.apply_kick(kick, photon_momentum=delta_p)
+        state.photon_reservoir, slip = apply_phase_slip(
+            state.photon_reservoir,
+            phase_slip_fraction=br["phase_slip_fraction"],
+        )
+        if slip > 0:
+            lattice.momentum_ledger -= slip
+            result.cumulative_phase_slip += slip
         lattice.relax_step()
 
         step_outward = 0.0
@@ -198,6 +210,8 @@ def run_eddington_probe(
                 "wind_y": float(w[1]),
                 "wind_z": float(w[2]),
                 "unstable_count": float(sum(1 for s in sites if s.unstable)),
+                "back_reaction_coupling": br["coupling_factor"],
+                "back_reaction_slip": slip,
             }
         )
 

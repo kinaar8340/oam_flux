@@ -18,6 +18,7 @@ class CouplingState:
     flywheel_sites: int = 4
     conserve_momentum: bool = True
     initial_total_momentum: float = 0.0
+    cumulative_phase_slip: float = 0.0
     history: list[dict[str, float]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
@@ -71,15 +72,33 @@ class CouplingState:
 
 def run_coupling_step(state: CouplingState, step: int, *, dz: float = 0.025) -> None:
     """One coupled timestep: photon propagates, kicks flywheels, lattice relaxes."""
-    kick = state.photon_kick()
+    from .back_reaction import apply_phase_slip, lattice_back_reaction
+
+    br = lattice_back_reaction(state.lattice, ell=state.photon.ell)
+    k_coupled = state.kick_strength * br["coupling_factor"]
+    kick = state.photon_kick() * br["coupling_factor"]
     p_before = state.photon.momentum
+    slip = 0.0
 
     if state.conserve_momentum:
-        delta_p = state.photon.transfer_momentum(p_before * state.kick_strength)
+        delta_p = state.photon.transfer_momentum(p_before * k_coupled)
         state.lattice.apply_kick(kick, photon_momentum=delta_p)
+        _, slip = apply_phase_slip(state.photon.momentum, phase_slip_fraction=br["phase_slip_fraction"])
+        if slip > 0:
+            actual_slip = state.photon.transfer_momentum(slip)
+            state.lattice.momentum_ledger -= actual_slip
+            state.cumulative_phase_slip += actual_slip
     else:
         state.lattice.theta = np.clip(state.lattice.theta + kick, 0.01, 2 * np.pi - 0.01)
 
     state.photon.propagate(dz)
     state.lattice.relax_step()
     state.record(step)
+    state.history[-1].update(
+        {
+            "back_reaction_coupling": br["coupling_factor"],
+            "back_reaction_slip": slip,
+            "back_reaction_ell_shift": br["effective_ell_shift"],
+            "cumulative_phase_slip": state.cumulative_phase_slip,
+        }
+    )

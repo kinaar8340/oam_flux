@@ -134,9 +134,23 @@ def _plot_momentum_history(history: list[dict], *, title: str, p0_label: str = "
     steps = [h["step"] for h in history]
     fig, axes = plt.subplots(2, 1, figsize=(8, 6), sharex=True, gridspec_kw={"height_ratios": [1, 1.2]})
 
-    axes[0].plot(steps, [h["mean_twist"] for h in history], color="#2a9d8f", lw=1.5)
+    axes[0].plot(steps, [h["mean_twist"] for h in history], color="#2a9d8f", lw=1.5, label="⟨θ⟩")
+    if history and "back_reaction_coupling" in history[0]:
+        ax_br = axes[0].twinx()
+        ax_br.plot(
+            steps,
+            [h.get("back_reaction_coupling", 1.0) for h in history],
+            color="#6a4c93",
+            ls="--",
+            lw=1.2,
+            label="back-react η",
+        )
+        ax_br.set_ylabel("η (coupling)", color="#6a4c93")
+        ax_br.set_ylim(0.0, 1.05)
+        ax_br.tick_params(axis="y", labelcolor="#6a4c93")
     axes[0].set_ylabel("⟨θ⟩")
     axes[0].set_title(title)
+    axes[0].legend(fontsize=7, loc="upper left")
     axes[0].grid(alpha=0.3)
 
     ax = axes[1]
@@ -242,6 +256,8 @@ def run_vqc_coupling(
         f"- **E₀** = {e0:.4f} eV  (E = hc/λ) · **f** = {f0:.2f} THz\n"
         f"- **p₀** = {p0:.6f} ×10⁻²⁷ kg·m/s  (p = h|ℓ|/λ) · **p/(ℏk)** = {p_nat:.3f}\n"
         f"{_kick_scale_line(kick_strength, e_scale)}"
+        f"- **Back-reaction** η_final = **{last.get('back_reaction_coupling', 1.0):.3f}** · "
+        f"phase slip = **{last.get('cumulative_phase_slip', 0.0):.4f}**\n"
         f"- Final ⟨θ⟩ = **{state.lattice.mean_twist:.4f}**\n"
         f"- p_photon final = **{last.get('photon_momentum', 0):.4f}**\n"
         f"- p_lattice received = **{last.get('lattice_received', 0):.4f}**\n"
@@ -359,6 +375,8 @@ def run_analytic_coupling(
         f"- **E₀** = {e0:.4f} eV · **p₀** = {p0:.6f} ×10⁻²⁷ kg·m/s · **p/(ℏk)** = {p_nat:.3f}\n"
         f"{_kick_scale_line(0.08, e_scale)}"
         f"- *Analytic kicks scale via p(E); κ_eff shown for comparison.*\n"
+        f"- **Back-reaction** η_final = **{last.get('back_reaction_coupling', 1.0):.3f}** · "
+        f"phase slip = **{last.get('cumulative_phase_slip', 0.0):.4f}**\n"
         f"- Final ⟨θ⟩ = **{state.lattice.mean_twist:.4f}**\n"
         f"- Δp_lattice = **{last.get('lattice_received', 0):.4f}**\n\n"
         f"{_conservation_badge(state.history)}\n"
@@ -510,6 +528,7 @@ def run_eddington(
         f"- **ℓ** = {ell} · **κ** = {kappa:.4f} · **λ** = {lambda_nm:.0f} nm · "
         f"**E** = {st['energy_ev']:.4f} eV\n"
         f"{_kick_scale_line(kick_strength, result.energy_scale)}"
+        f"- **Back-reaction** phase slip = **{result.cumulative_phase_slip:.4f}**\n"
         f"- Flywheels = **{n_flywheels}** · unstable sites = **{unstable}**\n"
         f"- Total outward flux = **{result.total_outward_flux:.4f}**\n"
         f"{wind_note}"
