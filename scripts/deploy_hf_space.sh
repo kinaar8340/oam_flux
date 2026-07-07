@@ -4,13 +4,14 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 HF_DIR="${HF_SPACE_DIR:-$ROOT/../oam_flux-hf}"
+HF_SSH_REMOTE="git@hf.co:spaces/kinaar111/oam_flux"
 
 bash "$ROOT/scripts/sync_hf_space.sh"
 
 if [[ ! -d "$HF_DIR/.git" ]]; then
   echo "Cloning HF Space into $HF_DIR ..."
   rm -rf "$HF_DIR"
-  git clone "https://huggingface.co/spaces/kinaar111/oam_flux" "$HF_DIR"
+  git clone "$HF_SSH_REMOTE" "$HF_DIR"
 fi
 
 rsync -av --delete \
@@ -34,9 +35,7 @@ MSG="Deploy oam_flux HF Space ($(git -C "$ROOT" rev-parse --short HEAD 2>/dev/nu
 git commit -m "$MSG"
 
 push_ok=false
-if [[ -n "${HF_TOKEN:-}" ]]; then
-  git remote set-url origin "https://kinaar111:${HF_TOKEN}@huggingface.co/spaces/kinaar111/oam_flux"
-fi
+git remote set-url origin "$HF_SSH_REMOTE"
 if git push 2>/dev/null; then
   push_ok=true
   echo "Deployed (git push) → https://huggingface.co/spaces/kinaar111/oam_flux"
