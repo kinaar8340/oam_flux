@@ -28,7 +28,7 @@ scipy>=1.10.0
 matplotlib>=3.7.0
 pyyaml>=6.0
 Pillow>=10.0.0
-pydantic==2.10.6
+# Do not pin pydantic — gradio 6.19[mcp] requires pydantic>=2.11.10
 audioop-lts>=0.2.1; python_version >= "3.13"
 EOF
 
